@@ -1,53 +1,107 @@
-# PineLens - AI-Powered Centralized Search Interface
+# PineLens v.2 - AI-Powered Unified Search Interface
 
-PineLens is a modern, AI-powered search interface that allows you to search across multiple connected services using MCP (Model Context Protocol) servers. Connect to Bitbucket, Jira, Teams, Confluence, GitHub, Slack, and more to create a unified search experience.
+## Overview
 
-## Features
+PineLens v.2 is an advanced, AI-powered centralized search interface designed for enterprise environments. It provides unified search capabilities across multiple platforms and services including GitHub, Jira, Bitbucket, Microsoft Teams, Confluence, Slack, and more.
 
-- **AI-Powered Search**: Choose from multiple AI models (GPT-4, Claude 3, Gemini Pro, Llama 2)
-- **Multi-Source Search**: Search across all your connected services simultaneously
-- **MCP Integration**: Built-in support for Model Context Protocol servers
-- **Real-time Results**: Live search results with relevance scoring
-- **Advanced Filtering**: Filter by source, date, author, and content type
-- **Modern UI**: Beautiful, responsive interface with smooth animations
-- **Enterprise Ready**: Secure authentication and connection management
+## Key Features
 
-## Getting Started
+### 🔍 **Unified Search**
+- Search across all connected enterprise services in one interface
+- AI-powered result ranking and relevance scoring
+- Real-time search suggestions and query optimization
+- Advanced filtering and sorting capabilities
 
-### Prerequisites
+### 🤖 **AI Integration**
+- Support for multiple AI models (GPT-4, Claude, Gemini Pro, Llama 2)
+- **GitHub Copilot Pro Integration**: Access to premium models (GPT-4, Claude 3.5 Sonnet, o1-preview, o1-mini)
+- Intelligent result processing and summarization
+- Automated key point extraction and tagging
+- Sentiment analysis and priority detection
 
-- Node.js 18+ 
-- npm or yarn
-- MCP servers for the services you want to connect
+### 🔗 **Multi-Platform Integration**
+- **GitHub/GitHub Enterprise**: Repositories, issues, pull requests, code search
+- **Jira**: Issues, projects, tickets, custom fields
+- **Confluence**: Pages, spaces, documentation
+- **Microsoft Teams**: Messages, files, meeting notes
+- **Slack**: Messages, files, channels
+- **Bitbucket**: Repositories, pull requests, issues
 
-### Installation
+### 📊 **Advanced Analytics**
+- Search performance metrics and trends
+- User satisfaction tracking
+- Source health monitoring
+- Popular results and search patterns
+- Exportable analytics data
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd pinelens
-```
+### 🛠 **Enterprise Features**
+- MCP (Model Context Protocol) server support
+- WebSocket and HTTP API connectivity
+- Secure authentication for all services
+- Real-time synchronization
+- Background processing
 
-2. Install dependencies:
-```bash
-npm install
-```
+## Architecture
 
-3. Start the development server:
-```bash
-npm run dev
-```
+### Frontend (React + TypeScript)
+- **Components**: Modular React components with TypeScript
+- **State Management**: React hooks and context
+- **UI Framework**: Tailwind CSS for responsive design
+- **Icons**: Lucide React for consistent iconography
 
-## Connecting MCP Servers
+## 🔍 Advanced Search Modes
 
-### 1. Setting Up Your Services
+PineLens supports four distinct search modes to match different use cases and company policies:
 
-Before connecting to PineLens, you'll need to set up API access for each service:
+### 1. 🌐 Unified Search (Default)
+Searches across all available sources - web, AI models, and connected apps - providing comprehensive results with intelligent ranking and deduplication.
 
-#### Bitbucket
-1. Go to Bitbucket Settings → App passwords
-2. Create a new app password with Repository permissions
-3. Note your username and the generated app password
+**Use Cases:**
+- General research and discovery
+- Getting complete context on topics
+- Finding information when source is unknown
+
+### 2. 🔍 Web Search Only
+Searches the web with company policy restrictions and content filtering to ensure compliance and safety.
+
+**Features:**
+- **Company Policy Compliance**: Automatically filters content based on predefined policies
+- **Domain Restrictions**: Allow/block specific domains per company guidelines
+- **Safe Search**: Built-in content filtering for inappropriate material
+- **Compliance Levels**: Strict, Moderate, or Relaxed filtering
+
+### 3. 🤖 AI Only Search
+Generates responses using multiple AI models simultaneously, providing diverse perspectives and AI-powered insights.
+
+**Supported AI Models:**
+- **GPT-4** (OpenAI): Advanced reasoning and code analysis
+- **Claude 3 Opus/Sonnet** (Anthropic): Safety-focused, analytical responses
+- **Gemini Pro** (Google): Multimodal understanding with Google integration
+- **Llama 2 70B** (Meta): Open-source alternative with community focus
+
+### 4. 📱 Apps Only Search
+Searches exclusively within your connected workspace applications with access-based filtering.
+
+**Supported Applications:**
+- **GitHub**: Repositories, issues, pull requests, discussions
+- **Jira**: Tickets, epics, sprints, comments
+- **Confluence**: Pages, spaces, attachments
+- **Slack**: Messages, channels, files, threads
+- **Microsoft Teams**: Chats, channels, meetings, files
+- **Bitbucket**: Repositories, pull requests, pipelines
+
+### Backend Integration
+- **MCP Client**: Manages connections to various services
+- **Search Processor**: AI-powered result processing and ranking
+- **API Service**: Enhanced backend connectivity and caching
+- **Service Integrations**: Direct API connections to enterprise services
+
+### Data Flow
+1. User submits search query through the UI
+2. Query is processed and sent to connected services
+3. Raw results are collected from multiple sources
+4. AI processes and ranks results for relevance
+5. Enhanced results are displayed with metadata and insights
 
 #### GitHub
 1. Go to GitHub Settings → Developer settings → Personal access tokens

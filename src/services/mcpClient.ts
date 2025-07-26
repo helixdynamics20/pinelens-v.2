@@ -1,3 +1,25 @@
+import { searchProcessor, ProcessedSearchResult, SearchProcessingOptions } from './searchProcessor';
+import { ServiceFactory, ServiceCredentials } from './integrations';
+import { webSearchService } from './webSearch';
+import { aiSearchService } from './aiSearch';
+import { realAPIService } from './realAPIService';
+import { githubMCPService, GitHubCredentials, GitHubSearchResult } from './githubMCPService';
+import { aiQueryProcessor, QueryIntent, MCPAction } from './aiQueryProcessor';
+
+export interface SearchResult {
+  id: string;
+  title: string;
+  content: string;
+  source: string;
+  sourceType: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
+  author: string;
+  date: string;
+  url: string;
+  relevanceScore: number;
+  starred?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 // Browser-compatible EventEmitter implementation
 class EventEmitter {
   private events: Map<string, Function[]> = new Map();
@@ -10,7 +32,7 @@ class EventEmitter {
     return this;
   }
 
-  emit(event: string, ...args: any[]): boolean {
+  emit(event: string, ...args: unknown[]): boolean {
     const listeners = this.events.get(event);
     if (!listeners) return false;
     
@@ -75,19 +97,22 @@ export interface SearchRequest {
     author?: string;
     type?: string;
   };
-}
-
-export interface SearchResult {
-  id: string;
-  title: string;
-  content: string;
-  source: string;
-  sourceType: string;
-  author: string;
-  date: string;
-  url: string;
-  relevanceScore: number;
-  metadata?: Record<string, any>;
+  searchMode?: 'web' | 'ai' | 'apps' | 'unified';
+  webRestrictions?: {
+    allowedDomains?: string[];
+    blockedDomains?: string[];
+    contentTypes?: string[];
+    safeSearch?: boolean;
+    complianceLevel?: 'strict' | 'moderate' | 'relaxed';
+  };
+  aiOptions?: {
+    models?: string[];
+    temperature?: number;
+    maxTokens?: number;
+    systemPrompt?: string;
+  };
+  appSources?: string[];
+  companyPolicies?: string[];
 }
 
 class MCPClient extends EventEmitter {
@@ -174,28 +199,63 @@ class MCPClient extends EventEmitter {
 
   private async connectHttpServer(serverId: string, server: MCPServer): Promise<void> {
     try {
-      // Test connection with a health check
-      const healthUrl = `${server.config.serverUrl.replace(/\/$/, '')}/health`;
-      const response = await fetch(healthUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.getHttpHeaders(server)
-        },
-        // Add timeout and error handling
-        signal: AbortSignal.timeout(10000) // 10 second timeout
-      });
-
-      if (response.ok) {
-        this.httpConnections.set(serverId, server.config.serverUrl);
-        server.status = 'connected';
-        server.lastSync = new Date().toISOString();
-        this.emit('serverStatusChanged', server);
-        
-        // Initialize with sync
-        await this.syncHttpServer(serverId, server);
+      // For GitHub, use a different health check endpoint
+      let healthUrl: string;
+      if (server.type === 'github') {
+        // Use GitHub's user endpoint as health check
+        healthUrl = `${server.config.serverUrl.replace(/\/$/, '')}/user`;
       } else {
-        throw new Error(`HTTP connection failed: ${response.status}`);
+        // Use standard health endpoint for other services
+        healthUrl = `${server.config.serverUrl.replace(/\/$/, '')}/health`;
+      }
+
+      // Create timeout controller for better browser compatibility
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      try {
+        const response = await fetch(healthUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            ...this.getHttpHeaders(server)
+          },
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          this.httpConnections.set(serverId, server.config.serverUrl);
+          server.status = 'connected';
+          server.lastSync = new Date().toISOString();
+          this.emit('serverStatusChanged', server);
+          
+          // For GitHub, we don't need to sync like other MCP servers
+          if (server.type !== 'github') {
+            await this.syncHttpServer(serverId, server);
+          } else {
+            // For GitHub, just get a count of user repositories
+            try {
+              const repoResponse = await fetch(`${server.config.serverUrl}/user/repos?per_page=1`, {
+                headers: this.getHttpHeaders(server)
+              });
+              if (repoResponse.ok) {
+                const totalCount = repoResponse.headers.get('X-Total-Count') || '0';
+                server.itemCount = parseInt(totalCount) || 0;
+                this.emit('serverSynced', server);
+              }
+            } catch (error) {
+              console.warn('Failed to get GitHub repo count:', error);
+              server.itemCount = 0;
+            }
+          }
+        } else {
+          throw new Error(`HTTP connection failed: ${response.status} - ${response.statusText}`);
+        }
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
       }
     } catch (error) {
       console.error(`HTTP connection error for ${serverId}:`, error);
@@ -234,26 +294,39 @@ class MCPClient extends EventEmitter {
   }
 
   private getHttpHeaders(server: MCPServer): Record<string, string> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'PineLens-MCP-Client/1.0'
+    };
     const credentials = this.getServerCredentials(server);
 
     switch (credentials.type) {
-      case 'token':
-        headers['Authorization'] = `token ${credentials.token}`;
+      case 'token': {
+        // For GitHub, use Bearer instead of token
+        if (server.type === 'github') {
+          headers['Authorization'] = `Bearer ${credentials.token}`;
+        } else {
+          headers['Authorization'] = `token ${credentials.token}`;
+        }
         break;
-      case 'basic':
+      }
+      case 'basic': {
         const basicAuth = btoa(`${credentials.username}:${credentials.password}`);
         headers['Authorization'] = `Basic ${basicAuth}`;
         break;
-      case 'oauth':
+      }
+      case 'oauth': {
         headers['Authorization'] = `Bearer ${credentials.token}`;
         break;
-      case 'api_key':
+      }
+      case 'api_key': {
         headers['Authorization'] = `Bearer ${credentials.apiKey}`;
         break;
-      case 'bot_token':
+      }
+      case 'bot_token': {
         headers['Authorization'] = `Bearer ${credentials.token}`;
         break;
+      }
     }
 
     return headers;
@@ -277,41 +350,687 @@ class MCPClient extends EventEmitter {
   async search(request: SearchRequest): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
     
-    // Get connected servers that match the requested sources
-    const connectedServers = Array.from(this.servers.values())
-      .filter(server => 
-        server.status === 'connected' && 
-        (request.sources.length === 0 || request.sources.includes(server.type))
-      );
-
-    if (connectedServers.length === 0) {
-      console.warn('No connected servers found for search');
-      return [];
+    // Handle different search modes
+    switch (request.searchMode) {
+      case 'web':
+        return await this.performWebSearch(request);
+      case 'ai':
+        return await this.performAISearch(request);
+      case 'apps':
+        return await this.performAppSearch(request);
+      case 'unified':
+      default:
+        return await this.performUnifiedSearch(request);
     }
+  }
 
-    // Send search requests to all connected servers
-    const searchPromises = connectedServers.map(server => 
-      this.httpConnections.has(server.id) 
-        ? this.searchHttpServer(server.id, request)
-        : this.searchServer(server.id, request)
-    );
-
+  /**
+   * Perform web-only search with company policy restrictions
+   */
+  private async performWebSearch(request: SearchRequest): Promise<SearchResult[]> {
     try {
-      const serverResults = await Promise.allSettled(searchPromises);
+      const webResults = await webSearchService.search(request.query, request.webRestrictions);
       
-      serverResults.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          results.push(...result.value);
-        } else {
-          console.error(`Search failed for server ${connectedServers[index].id}:`, result.reason);
-        }
+      const rawResults = webResults.map(result => ({
+        id: result.id,
+        title: result.title,
+        content: result.content,
+        source: result.source,
+        sourceType: result.sourceType,
+        author: result.author,
+        date: result.date,
+        url: result.url,
+        metadata: result.metadata || {}
+      }));
+
+      const processedResults = await searchProcessor.processResults(rawResults, {
+        query: request.query,
+        model: request.model,
+        maxResults: 50,
+        includeAnalysis: true,
+        searchMode: 'web',
+        webRestrictions: request.webRestrictions,
+        companyPolicies: request.companyPolicies
       });
 
-      // Sort by relevance score
-      return results.sort((a, b) => b.relevanceScore - a.relevanceScore);
+      return this.convertToSearchResults(processedResults);
     } catch (error) {
-      console.error('Search error:', error);
+      console.error('Web search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Perform AI-only search
+   */
+  private async performAISearch(request: SearchRequest): Promise<SearchResult[]> {
+    try {
+      const aiOptions = {
+        models: request.aiOptions?.models || ['gpt-4', 'claude-3-sonnet'],
+        temperature: request.aiOptions?.temperature,
+        maxTokens: request.aiOptions?.maxTokens,
+        systemPrompt: request.aiOptions?.systemPrompt
+      };
+
+      const aiResults = await aiSearchService.search(request.query, aiOptions);
+      
+      const rawResults = aiResults.map(result => ({
+        id: result.id,
+        title: result.title,
+        content: result.content,
+        source: result.source,
+        sourceType: result.sourceType,
+        author: result.author,
+        date: result.date,
+        url: result.url,
+        metadata: result.metadata || {}
+      }));
+
+      const processedResults = await searchProcessor.processResults(rawResults, {
+        query: request.query,
+        model: request.model,
+        maxResults: 20,
+        includeAnalysis: true,
+        searchMode: 'ai',
+        aiModels: aiOptions.models
+      });
+
+      return this.convertToSearchResults(processedResults);
+    } catch (error) {
+      console.error('AI search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Perform app-specific search with AI query processing (VS Code MCP style)
+   */
+  private async performAppSearch(request: SearchRequest): Promise<SearchResult[]> {
+    try {
+      console.log('🔍 Starting AI-powered MCP search (VS Code style)...');
+      
+      // Get connected MCP servers
+      const connectedServers = Array.from(this.servers.values()).filter(server => server.status === 'connected');
+      console.log(`📱 Found ${connectedServers.length} connected MCP servers`);
+      
+      if (connectedServers.length === 0) {
+        throw new Error('No MCP servers connected. Please connect your GitHub, Jira, or other services in the MCP Connections section.');
+      }
+
+      // Step 1: Use AI to process the natural language query
+      const availableServers = connectedServers.map(s => s.type);
+      console.log(`🤖 Processing query with AI: "${request.query}"`);
+      console.log(`Available servers: ${availableServers.join(', ')}`);
+      
+      const queryIntent: QueryIntent = await aiQueryProcessor.processQuery(request.query, availableServers);
+      console.log(`🎯 AI Intent Analysis:`, {
+        intent: queryIntent.intent,
+        confidence: queryIntent.confidence,
+        actions: queryIntent.actions.length
+      });
+
+      if (queryIntent.actions.length === 0) {
+        console.warn('❌ AI found no suitable actions for this query');
+        throw new Error(`I couldn't understand how to search for "${request.query}". Try rephrasing your query or check if you have the right services connected.`);
+      }
+
+      // Step 2: Execute MCP actions based on AI recommendations
+      const allResults: SearchResult[] = [];
+      
+      for (const action of queryIntent.actions.slice(0, 3)) { // Limit to top 3 actions
+        try {
+          console.log(`� Executing action: ${action.server}.${action.action} (priority: ${action.priority})`);
+          
+          const server = connectedServers.find(s => s.type === action.server);
+          if (!server) {
+            console.warn(`⚠️ Server ${action.server} not connected, skipping action`);
+            continue;
+          }
+
+          const actionResults = await this.executeAIAction(server, action, request);
+          console.log(`✅ Action ${action.server}.${action.action} returned ${actionResults.length} results`);
+          
+          allResults.push(...actionResults);
+        } catch (error) {
+          console.warn(`❌ Action ${action.server}.${action.action} failed:`, error);
+          // Continue with other actions even if one fails
+        }
+      }
+
+      if (allResults.length === 0) {
+        throw new Error(`No results found for "${request.query}". The search completed successfully but returned no matching items from your connected services.`);
+      }
+
+      console.log(`📊 Total AI-powered MCP search results: ${allResults.length}`);
+      
+      // Step 3: Sort by relevance and action priority
+      const sortedResults = allResults.sort((a, b) => {
+        // First by relevance score
+        const relevanceDiff = b.relevanceScore - a.relevanceScore;
+        if (Math.abs(relevanceDiff) > 0.1) return relevanceDiff;
+        
+        // Then by recency
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      }).slice(0, 50);
+
+      return sortedResults;
+      
+    } catch (error) {
+      console.error('❌ AI-powered MCP search failed:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Execute a specific AI-recommended action on an MCP server
+   */
+  private async executeAIAction(server: MCPServer, action: MCPAction, request: SearchRequest): Promise<SearchResult[]> {
+    switch (server.type) {
+      case 'github':
+        return await this.executeGitHubAction(server, action, request);
+      
+      case 'jira':
+      case 'confluence':
+      case 'slack':
+      case 'teams':
+      case 'bitbucket':
+        // Use generic MCP search for other services
+        return await this.searchMCPServer(server.id, request);
+      
+      default:
+        console.warn(`Unknown server type: ${server.type}`);
+        return [];
+    }
+  }
+
+  /**
+   * Execute GitHub-specific actions based on AI recommendations
+   */
+  private async executeGitHubAction(server: MCPServer, action: MCPAction, request: SearchRequest): Promise<SearchResult[]> {
+    try {
+      // Set up GitHub credentials
+      const credentials: GitHubCredentials = {
+        username: server.config.username || '',
+        token: server.config.token || ''
+      };
+
+      githubMCPService.setCredentials(credentials);
+
+      switch (action.action) {
+        case 'get_user_repos':
+          console.log('📦 Fetching user repositories...');
+          const userRepos = await githubMCPService.getUserRepositories(1, 30);
+          return this.convertGitHubResults(userRepos, server);
+
+        case 'search_repositories':
+          console.log(`🔍 Searching repositories with: ${JSON.stringify(action.parameters)}`);
+          let repoQuery = action.parameters.query as string || request.query;
+          
+          // Apply AI-recommended parameters
+          if (action.parameters.language) {
+            repoQuery += ` language:${action.parameters.language}`;
+          }
+          if (action.parameters.user) {
+            repoQuery += ` user:${action.parameters.user}`;
+          }
+
+          const repoResults = await githubMCPService.search(repoQuery, {
+            types: ['repositories'],
+            limit: 20,
+            sort: 'best-match',
+            order: 'desc'
+          });
+          return this.convertGitHubResults(repoResults, server);
+
+        case 'search_issues':
+          console.log(`🐛 Searching issues with: ${JSON.stringify(action.parameters)}`);
+          let issueQuery = action.parameters.query as string || request.query;
+          
+          // Apply AI-recommended parameters
+          if (action.parameters.assignee === '@me') {
+            issueQuery += ` assignee:${credentials.username}`;
+          }
+          if (action.parameters.state) {
+            issueQuery += ` state:${action.parameters.state}`;
+          }
+
+          const issueResults = await githubMCPService.search(issueQuery, {
+            types: ['issues'],
+            limit: 15,
+            sort: 'updated',
+            order: 'desc'
+          });
+          return this.convertGitHubResults(issueResults, server);
+
+        case 'search_code':
+          console.log(`� Searching code with: ${JSON.stringify(action.parameters)}`);
+          const codeResults = await githubMCPService.search(request.query, {
+            types: ['code'],
+            limit: 10,
+            sort: 'indexed',
+            order: 'desc'
+          });
+          return this.convertGitHubResults(codeResults, server);
+
+        case 'search_commits':
+          console.log(`📝 Searching commits with: ${JSON.stringify(action.parameters)}`);
+          const commitResults = await githubMCPService.search(request.query, {
+            types: ['commits'],
+            limit: 10,
+            sort: 'committer-date',
+            order: 'desc'
+          });
+          return this.convertGitHubResults(commitResults, server);
+
+        default:
+          console.warn(`Unknown GitHub action: ${action.action}`);
+          // Fallback to general search
+          const fallbackResults = await githubMCPService.search(request.query, {
+            limit: 20,
+            sort: 'best-match',
+            order: 'desc'
+          });
+          return this.convertGitHubResults(fallbackResults, server);
+      }
+    } catch (error) {
+      console.error(`GitHub MCP action failed for ${server.name}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Convert GitHub MCP results to SearchResult format
+   */
+  private convertGitHubResults(githubResults: GitHubSearchResult[], server: MCPServer): SearchResult[] {
+    return githubResults.map(result => ({
+      id: result.id,
+      title: result.title,
+      content: result.content,
+      source: server.name,
+      sourceType: 'github' as const,
+      author: result.author,
+      date: result.date,
+      url: result.url,
+      relevanceScore: this.calculateRelevance(result.title, result.content, ''), // Will be recalculated
+      starred: false,
+      metadata: {
+        ...result.metadata,
+        mcpServer: server.id,
+        searchType: 'ai-powered-mcp'
+      }
+    }));
+  }
+
+  /**
+   * Search GitHub using MCP service (VS Code style - direct query processing)
+   */
+  private async searchGitHubMCP(server: MCPServer, request: SearchRequest): Promise<SearchResult[]> {
+    try {
+      // Set up GitHub credentials
+      const credentials: GitHubCredentials = {
+        username: server.config.username || '',
+        token: server.config.token || ''
+      };
+
+      githubMCPService.setCredentials(credentials);
+
+      // Let GitHub MCP service intelligently handle the query like VS Code does
+      // Don't pre-process or extract types - pass the query directly
+      const githubResults = await githubMCPService.search(request.query, {
+        types: ['repositories', 'issues', 'code', 'commits'], // Search all types by default
+        limit: 30,
+        sort: 'best-match', 
+        order: 'desc'
+      });
+
+      console.log(`🔍 GitHub MCP found ${githubResults.length} results for: "${request.query}"`);
+
+      // Convert GitHub results to SearchResult format
+      return githubResults.map(result => ({
+        id: result.id,
+        title: result.title,
+        content: result.content,
+        source: server.name,
+        sourceType: 'github' as const,
+        author: result.author,
+        date: result.date,
+        url: result.url,
+        relevanceScore: this.calculateRelevance(result.title, result.content, request.query),
+        starred: false,
+        metadata: {
+          ...result.metadata,
+          mcpServer: server.id,
+          searchType: 'github-mcp'
+        }
+      }));
+    } catch (error) {
+      console.error(`GitHub MCP search failed for ${server.name}:`, error);
+      throw new Error(`GitHub search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Search a generic MCP server
+   */
+  private async searchMCPServer(serverId: string, request: SearchRequest): Promise<SearchResult[]> {
+    const server = this.servers.get(serverId);
+    if (!server) {
+      throw new Error(`Server ${serverId} not found`);
+    }
+
+    try {
+      // Check if it's a WebSocket or HTTP server
+      if (this.connections.has(serverId)) {
+        return await this.searchServer(serverId, request);
+      } else if (this.httpConnections.has(serverId)) {
+        return await this.searchHttpServer(serverId, request);
+      } else {
+        throw new Error(`Server ${serverId} not connected`);
+      }
+    } catch (error) {
+      console.error(`MCP server search failed for ${serverId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Calculate relevance score for search results
+   */
+  private calculateRelevance(title: string, content: string, query: string): number {
+    const queryLower = query.toLowerCase();
+    const titleLower = title.toLowerCase();
+    const contentLower = content.toLowerCase();
+
+    let score = 0;
+
+    // Title exact match
+    if (titleLower === queryLower) score += 1.0;
+    // Title contains query
+    else if (titleLower.includes(queryLower)) score += 0.8;
+    // Title words match
+    else if (queryLower.split(' ').some(word => titleLower.includes(word))) score += 0.6;
+
+    // Content match
+    if (contentLower.includes(queryLower)) score += 0.4;
+    else if (queryLower.split(' ').some(word => contentLower.includes(word))) score += 0.2;
+
+    // Normalize score to 0-1 range
+    return Math.min(score, 1.0);
+  }
+
+  /**
+   * Perform unified search across all sources
+   */
+  private async performUnifiedSearch(request: SearchRequest): Promise<SearchResult[]> {
+    try {
+      // Perform all types of searches in parallel
+      const [webResults, aiResults, appResults] = await Promise.allSettled([
+        this.performWebSearch({ ...request, searchMode: 'web' }),
+        this.performAISearch({ ...request, searchMode: 'ai' }),
+        this.performAppSearch({ ...request, searchMode: 'apps' })
+      ]);
+
+      const allResults: SearchResult[] = [];
+
+      // Collect results from all sources
+      if (webResults.status === 'fulfilled') {
+        allResults.push(...webResults.value);
+      }
+      if (aiResults.status === 'fulfilled') {
+        allResults.push(...aiResults.value);
+      }
+      if (appResults.status === 'fulfilled') {
+        allResults.push(...appResults.value);
+      }
+
+      // Re-rank and deduplicate unified results
+      const rawResults = allResults.map(result => ({
+        id: result.id,
+        title: result.title,
+        content: result.content,
+        source: result.source,
+        sourceType: result.sourceType,
+        author: result.author,
+        date: result.date,
+        url: result.url,
+        metadata: result.metadata || {}
+      }));
+
+      const processedResults = await searchProcessor.processResults(rawResults, {
+        query: request.query,
+        model: request.model,
+        maxResults: 100,
+        includeAnalysis: true
+      });
+
+      return this.convertToSearchResults(processedResults)
+        .sort((a, b) => b.relevanceScore - a.relevanceScore)
+        .slice(0, request.filters?.type === 'all' ? 100 : 50);
+    } catch (error) {
+      console.error('Unified search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get mock search results for apps search mode demo
+   */
+  private getMockAppSearchResults(query: string): SearchResult[] {
+    const mockResults = [
+      {
+        id: 'app-bitbucket-1',
+        title: 'User Authentication API Enhancement',
+        content: 'Implementation of OAuth 2.0 authentication system with JWT tokens and refresh token rotation. This pull request includes comprehensive security improvements and backward compatibility.',
+        source: 'Company Bitbucket',
+        sourceType: 'bitbucket' as const,
+        author: 'Alice Johnson',
+        date: '2024-01-15T10:30:00Z',
+        url: 'https://bitbucket.company.com/projects/AUTH/repos/api-auth/pull-requests/123',
+        relevanceScore: 0.92,
+        starred: false,
+        metadata: {
+          type: 'pull_request',
+          status: 'approved',
+          reviewers: ['john.doe', 'sarah.smith'],
+          branch: 'feature/oauth2-enhancement'
+        }
+      },
+      {
+        id: 'app-jira-1',
+        title: `TASK-456: ${query} Integration Bug`,
+        content: `Critical bug reported in the ${query} integration affecting user login flows. High priority issue needs immediate attention from the development team.`,
+        source: 'Project Jira',
+        sourceType: 'jira' as const,
+        author: 'Mike Chen',
+        date: '2024-01-14T14:20:00Z',
+        url: 'https://company.atlassian.net/browse/TASK-456',
+        relevanceScore: 0.88,
+        starred: true,
+        metadata: {
+          type: 'bug',
+          priority: 'high',
+          status: 'in-progress',
+          assignee: 'alice.johnson',
+          sprint: 'Sprint 2024-01'
+        }
+      },
+      {
+        id: 'app-slack-1',
+        title: `Discussion: ${query} Implementation`,
+        content: `Team discussion about implementing ${query} features in the next sprint. Includes technical requirements, timeline estimates, and resource allocation planning.`,
+        source: 'Team Slack',
+        sourceType: 'slack' as const,
+        author: 'Sarah Smith',
+        date: '2024-01-13T16:45:00Z',
+        url: 'https://teamworkspace.slack.com/archives/C123456/p1642089900',
+        relevanceScore: 0.75,
+        starred: false,
+        metadata: {
+          type: 'message',
+          channel: '#development',
+          thread_ts: '1642089900.123456',
+          reactions: { '+1': 5, 'eyes': 2 }
+        }
+      },
+      {
+        id: 'app-bitbucket-2',
+        title: 'Database Migration Script for User Management',
+        content: 'SQL migration scripts for updating user management schema. Includes rollback procedures and data validation checks for production deployment.',
+        source: 'Company Bitbucket',
+        sourceType: 'bitbucket' as const,
+        author: 'David Wilson',
+        date: '2024-01-12T09:15:00Z',
+        url: 'https://bitbucket.company.com/projects/DB/repos/migrations/browse/migrations/2024-01-12-user-mgmt.sql',
+        relevanceScore: 0.82,
+        starred: false,
+        metadata: {
+          type: 'file',
+          path: 'migrations/2024-01-12-user-mgmt.sql',
+          size: '2.3KB',
+          language: 'sql'
+        }
+      },
+      {
+        id: 'app-jira-2',
+        title: 'STORY-789: Enhanced Search Functionality',
+        content: 'User story for implementing advanced search capabilities across all connected services. Includes acceptance criteria and technical specifications.',
+        source: 'Project Jira',
+        sourceType: 'jira' as const,
+        author: 'Lisa Anderson',
+        date: '2024-01-11T11:30:00Z',
+        url: 'https://company.atlassian.net/browse/STORY-789',
+        relevanceScore: 0.79,
+        starred: false,
+        metadata: {
+          type: 'story',
+          priority: 'medium',
+          status: 'ready-for-development',
+          story_points: 8,
+          epic: 'EPIC-100'
+        }
+      }
+    ];
+
+    // Filter results based on query relevance
+    return mockResults.filter(result => 
+      result.title.toLowerCase().includes(query.toLowerCase()) ||
+      result.content.toLowerCase().includes(query.toLowerCase())
+    ).sort((a, b) => b.relevanceScore - a.relevanceScore);
+  }
+
+  /**
+   * Convert processed results back to SearchResult format
+   */
+  private convertToSearchResults(processedResults: ProcessedSearchResult[]): SearchResult[] {
+    return processedResults.map(result => ({
+      id: result.id,
+      title: result.title,
+      content: result.content,
+      source: result.source,
+      sourceType: result.sourceType as 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack',
+      author: result.author,
+      date: result.date,
+      url: result.url,
+      relevanceScore: result.relevanceScore,
+      starred: false,
+      metadata: {
+        ...result.metadata,
+        summary: result.summary,
+        keyPoints: result.keyPoints,
+        tags: result.tags,
+        priority: result.priority,
+        sentiment: result.sentiment
+      }
+    }));
+  }
+
+  private async searchWithServiceIntegration(
+    server: MCPServer,
+    request: SearchRequest
+  ): Promise<SearchResult[]> {
+    try {
+      // Try using service integration first
+      const credentials = this.getServiceCredentials(server);
+      const service = ServiceFactory.createService(server.type, server.config, credentials);
+      
+      const searchQuery = {
+        query: request.query,
+        filters: {
+          dateRange: request.filters?.dateRange,
+          author: request.filters?.author,
+          type: request.filters?.type
+        },
+        limit: 25
+      };
+
+      const serviceResults = await service.search(searchQuery);
+      
+      return serviceResults.map(result => ({
+        id: result.id,
+        title: result.title,
+        content: result.content,
+        source: server.name,
+        sourceType: server.type,
+        author: result.author,
+        date: result.createdAt,
+        url: result.url,
+        relevanceScore: 0.5, // Will be calculated by search processor
+        starred: false,
+        metadata: result.metadata
+      }));
+
+    } catch (error) {
+      console.error(`Service integration failed for ${server.id}, falling back to MCP:`, error);
+      
+      // Fallback to original MCP search
+      if (this.httpConnections.has(server.id)) {
+        return this.searchHttpServer(server.id, request);
+      } else {
+        return this.searchServer(server.id, request);
+      }
+    }
+  }
+
+  private getServiceCredentials(server: MCPServer): ServiceCredentials {
+    const { config } = server;
+    
+    switch (server.type) {
+      case 'bitbucket':
+      case 'github':
+        return {
+          type: 'token',
+          token: config.token,
+          username: config.username
+        };
+      
+      case 'jira':
+        return {
+          type: 'basic',
+          username: config.username || '',
+          password: config.password || ''
+        };
+      
+      case 'teams':
+        return {
+          type: 'oauth',
+          token: config.token || ''
+        };
+      
+      case 'confluence':
+        return {
+          type: 'api_key',
+          apiKey: config.apiKey || '',
+          username: config.username || ''
+        };
+      
+      case 'slack':
+        return {
+          type: 'bot_token',
+          token: config.token || ''
+        };
+      
+      default:
+        return { type: 'token' };
     }
   }
 

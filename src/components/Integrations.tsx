@@ -7,23 +7,39 @@ import {
   Plus,
   Settings,
   CheckCircle,
-  AlertCircle,
   XCircle,
-  ExternalLink,
   Zap,
   Shield,
   Clock,
-  Users,
   Search,
-  Globe,
-  Key,
-  Trash2,
-  Edit3
+  Trash2
 } from 'lucide-react';
+import { MCPConnections } from './MCPConnections';
+import { MCPServerSetup } from './MCPServerSetup';
+import { MCPServerConfig } from '../services/mcpClient';
 
 interface IntegrationsProps {
   isVisible: boolean;
   onAddServer: () => void;
+  // MCP server management props
+  mcpServers?: MCPServer[];
+  onMCPConnect?: (serverId: string) => void;
+  onMCPDisconnect?: (serverId: string) => void;
+  onMCPConfigure?: (serverId: string) => void;
+  onMCPAddServer?: (config: {
+    name: string;
+    type: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
+    serverConfig: MCPServerConfig;
+  }) => Promise<void>;
+}
+
+interface MCPServer {
+  id: string;
+  name: string;
+  type: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
+  status: 'connected' | 'connecting' | 'error' | 'disconnected';
+  lastSync?: string;
+  itemCount?: number;
 }
 
 interface Integration {
@@ -40,9 +56,19 @@ interface Integration {
   lastSync?: string;
 }
 
-export const Integrations: React.FC<IntegrationsProps> = ({ isVisible, onAddServer }) => {
+export const Integrations: React.FC<IntegrationsProps> = ({ 
+  isVisible, 
+  onAddServer,
+  mcpServers = [],
+  onMCPConnect = () => {},
+  onMCPDisconnect = () => {},
+  onMCPConfigure = () => {},
+  onMCPAddServer = async () => {}
+}) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showMCPSetup, setShowMCPSetup] = useState(false);
+  const [activeTab, setActiveTab] = useState<'integrations' | 'mcp-servers'>('integrations');
 
   if (!isVisible) return null;
 
@@ -243,8 +269,37 @@ export const Integrations: React.FC<IntegrationsProps> = ({ isVisible, onAddServ
         </button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('integrations')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'integrations'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            App Integrations
+          </button>
+          <button
+            onClick={() => setActiveTab('mcp-servers')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'mcp-servers'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            MCP Servers
+          </button>
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'integrations' ? (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
           <div className="flex items-center space-x-3">
             <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
@@ -431,6 +486,26 @@ export const Integrations: React.FC<IntegrationsProps> = ({ isVisible, onAddServ
           </div>
         </div>
       </div>
+        </>) : (
+        /* MCP Servers Tab */
+        <div className="space-y-6">
+          <MCPConnections
+            servers={mcpServers}
+            onConnect={onMCPConnect}
+            onDisconnect={onMCPDisconnect}
+            onConfigure={onMCPConfigure}
+            onAddServer={() => setShowMCPSetup(true)}
+          />
+          
+          {showMCPSetup && (
+            <MCPServerSetup
+              isOpen={showMCPSetup}
+              onClose={() => setShowMCPSetup(false)}
+              onAddServer={onMCPAddServer}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 };

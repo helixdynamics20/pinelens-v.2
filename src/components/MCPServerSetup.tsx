@@ -61,6 +61,17 @@ export const MCPServerSetup: React.FC<MCPServerSetupProps> = ({
       defaultUrl: 'https://api.github.com'
     },
     {
+      id: 'github-copilot-pro',
+      name: 'GitHub Copilot Pro',
+      icon: <GitBranch className="w-5 h-5" />,
+      description: 'Connect to GitHub Copilot Pro AI models (GPT-4, Claude, o1)',
+      fields: [
+        { key: 'username', label: 'GitHub Username', type: 'text', required: true },
+        { key: 'token', label: 'GitHub Personal Access Token', type: 'password', required: true }
+      ],
+      defaultUrl: 'https://api.github.com'
+    },
+    {
       id: 'github-local',
       name: 'GitHub (Local MCP)',
       icon: <GitBranch className="w-5 h-5" />,
