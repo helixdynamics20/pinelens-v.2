@@ -233,7 +233,7 @@ function App() {
       let results: UnifiedSearchResult[] = [];
 
       // Check if this is an AI-focused search that should use Gemini
-      if (searchMode === 'ai' || (searchMode === 'unified' && sources.length === 0)) {
+      if (searchMode === 'ai') {
         try {
           if (model.startsWith('gemini-') || model === 'gemini-pro' || model === 'gemini-1.5-pro' || model === 'gemini-1.5-flash') {
             // Use Gemini service for AI response
@@ -366,7 +366,23 @@ function App() {
         }
       } else {
         // Use unified search for web and unified modes
+        console.log(`🌍 ${searchMode === 'unified' ? 'All mode' : searchMode + ' mode'}: Using unified search across all sources`);
+        console.log(`🔧 Search options:`, { searchMode, sources, model });
         results = await unifiedSearchService.search(query, searchOptions);
+        console.log(`📊 ${searchMode === 'unified' ? 'All mode' : searchMode + ' mode'}: Got ${results.length} results`);
+      }
+
+      // Ensure apps mode only shows MCP results
+      if (searchMode === 'apps') {
+        // Filter to only include MCP server results (exclude web sources)
+        results = results.filter(result => 
+          result.sourceType !== 'web' && 
+          (result.searchMode === 'apps' || 
+           ['github', 'bitbucket', 'jira', 'confluence', 'teams', 'slack', 'ai'].includes(result.sourceType))
+        );
+        console.log(`🔍 Apps mode: Filtered to ${results.length} MCP server results (no web results)`);
+      } else if (searchMode === 'unified') {
+        console.log(`📊 All mode: Showing ${results.length} results from all sources (MCP + Web + AI)`);
       }
 
       setSearchResults(results);

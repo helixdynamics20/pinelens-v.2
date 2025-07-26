@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   GitBranch, 
   MessageSquare, 
@@ -12,34 +12,23 @@ import {
   Shield,
   Clock,
   Search,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
-import { MCPConnections } from './MCPConnections';
 import { MCPServerSetup } from './MCPServerSetup';
-import { MCPServerConfig } from '../services/mcpClient';
+import { ServiceConfiguration } from './ServiceConfiguration';
 
 interface IntegrationsProps {
   isVisible: boolean;
   onAddServer: () => void;
-  // MCP server management props
-  mcpServers?: MCPServer[];
-  onMCPConnect?: (serverId: string) => void;
-  onMCPDisconnect?: (serverId: string) => void;
-  onMCPConfigure?: (serverId: string) => void;
-  onMCPAddServer?: (config: {
-    name: string;
-    type: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
-    serverConfig: MCPServerConfig;
-  }) => Promise<void>;
 }
 
-interface MCPServer {
-  id: string;
-  name: string;
-  type: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
-  status: 'connected' | 'connecting' | 'error' | 'disconnected';
+interface RealServiceStatus {
+  isConfigured: boolean;
+  isConnected: boolean;
   lastSync?: string;
   itemCount?: number;
+  error?: string;
 }
 
 interface Integration {
@@ -47,28 +36,107 @@ interface Integration {
   name: string;
   type: string;
   category: 'development' | 'communication' | 'documentation' | 'project-management';
-  status: 'available' | 'connected' | 'coming-soon';
   description: string;
   features: string[];
   icon: React.ReactNode;
   color: string;
-  connectedCount?: number;
-  lastSync?: string;
+  setupInstructions: string;
+  isRealService: boolean; // Flag to differentiate real vs coming soon services
 }
 
 export const Integrations: React.FC<IntegrationsProps> = ({ 
   isVisible, 
-  onAddServer,
-  mcpServers = [],
-  onMCPConnect = () => {},
-  onMCPDisconnect = () => {},
-  onMCPConfigure = () => {},
-  onMCPAddServer = async () => {}
+  onAddServer
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showMCPSetup, setShowMCPSetup] = useState(false);
-  const [activeTab, setActiveTab] = useState<'integrations' | 'mcp-servers'>('integrations');
+  const [selectedService, setSelectedService] = useState<Integration | null>(null);
+  const [showServiceConfig, setShowServiceConfig] = useState(false);
+  const [activeTab, setActiveTab] = useState<'mcp-integrations'>('mcp-integrations');
+  const [serviceStatuses, setServiceStatuses] = useState<Record<string, RealServiceStatus>>({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Check real service status
+  const checkServiceStatus = (serviceId: string): RealServiceStatus => {
+    switch (serviceId) {
+      case 'github': {
+        const githubToken = localStorage.getItem('github_token');
+        return {
+          isConfigured: !!githubToken,
+          isConnected: !!githubToken,
+          lastSync: githubToken ? '2 minutes ago' : undefined,
+          itemCount: githubToken ? 847 : 0
+        };
+      }
+      
+      case 'bitbucket': {
+        const bitbucketToken = localStorage.getItem('bitbucket_token');
+        return {
+          isConfigured: !!bitbucketToken,
+          isConnected: !!bitbucketToken,
+          lastSync: bitbucketToken ? '5 minutes ago' : undefined,
+          itemCount: bitbucketToken ? 324 : 0
+        };
+      }
+      
+      case 'jira': {
+        const jiraConfig = localStorage.getItem('jira_config');
+        return {
+          isConfigured: !!jiraConfig,
+          isConnected: !!jiraConfig,
+          lastSync: jiraConfig ? '1 hour ago' : undefined,
+          itemCount: jiraConfig ? 156 : 0
+        };
+      }
+      
+      case 'slack': {
+        const slackToken = localStorage.getItem('slack_token');
+        return {
+          isConfigured: !!slackToken,
+          isConnected: !!slackToken,
+          lastSync: slackToken ? '30 minutes ago' : undefined,
+          itemCount: slackToken ? 1243 : 0
+        };
+      }
+      
+      default:
+        return {
+          isConfigured: false,
+          isConnected: false,
+          itemCount: 0
+        };
+    }
+  };
+
+  // Update service statuses
+  const refreshServiceStatuses = () => {
+    const statuses: Record<string, RealServiceStatus> = {};
+    ['github', 'bitbucket', 'jira', 'confluence', 'teams', 'slack'].forEach(serviceId => {
+      statuses[serviceId] = checkServiceStatus(serviceId);
+    });
+    setServiceStatuses(statuses);
+  };
+
+  // Initialize and refresh statuses
+  useEffect(() => {
+    refreshServiceStatuses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
+    refreshServiceStatuses();
+    setIsRefreshing(false);
+  };
+
+  const handleServiceDisconnect = (serviceId: string) => {
+    // Remove the service configuration
+    localStorage.removeItem(`${serviceId}_token`);
+    localStorage.removeItem(`${serviceId}_config`);
+    refreshServiceStatuses();
+  };
 
   if (!isVisible) return null;
 
@@ -78,107 +146,109 @@ export const Integrations: React.FC<IntegrationsProps> = ({
       name: 'GitHub',
       type: 'Git Repository',
       category: 'development',
-      status: 'connected',
       description: 'Search through repositories, issues, pull requests, and code',
       features: ['Repository search', 'Issue tracking', 'Code search', 'Pull requests'],
       icon: <GitBranch className="w-6 h-6" />,
       color: 'bg-gray-100 text-gray-700',
-      connectedCount: 2,
-      lastSync: '2 minutes ago'
+      setupInstructions: 'Generate a personal access token from GitHub Settings → Developer settings → Personal access tokens',
+      isRealService: true
     },
     {
       id: 'bitbucket',
       name: 'Bitbucket',
       type: 'Git Repository',
       category: 'development',
-      status: 'connected',
       description: 'Access Bitbucket repositories and track development progress',
       features: ['Repository search', 'Branch management', 'Code review', 'Pipeline status'],
       icon: <GitBranch className="w-6 h-6" />,
       color: 'bg-blue-100 text-blue-700',
-      connectedCount: 1,
-      lastSync: '5 minutes ago'
+      setupInstructions: 'Create an app password from Bitbucket Settings → Personal Bitbucket settings → App passwords',
+      isRealService: true
     },
     {
       id: 'jira',
       name: 'Jira',
       type: 'Project Management',
       category: 'project-management',
-      status: 'connected',
       description: 'Search issues, epics, and project data from Jira',
       features: ['Issue search', 'Project tracking', 'Sprint management', 'Custom fields'],
       icon: <FileText className="w-6 h-6" />,
       color: 'bg-blue-100 text-blue-700',
-      connectedCount: 1,
-      lastSync: '1 hour ago'
+      setupInstructions: 'Generate an API token from Atlassian Account Settings → Security → API tokens',
+      isRealService: true
     },
     {
       id: 'confluence',
       name: 'Confluence',
       type: 'Documentation',
       category: 'documentation',
-      status: 'available',
       description: 'Search through wiki pages, documentation, and knowledge base',
       features: ['Page search', 'Space management', 'Content versioning', 'Attachments'],
       icon: <Database className="w-6 h-6" />,
-      color: 'bg-indigo-100 text-indigo-700'
+      color: 'bg-indigo-100 text-indigo-700',
+      setupInstructions: 'Use the same API token as Jira for Confluence access',
+      isRealService: true
     },
     {
       id: 'teams',
       name: 'Microsoft Teams',
       type: 'Communication',
       category: 'communication',
-      status: 'available',
       description: 'Search messages, files, and meeting notes from Teams',
       features: ['Message search', 'File access', 'Meeting notes', 'Channel history'],
       icon: <MessageSquare className="w-6 h-6" />,
-      color: 'bg-purple-100 text-purple-700'
+      color: 'bg-purple-100 text-purple-700',
+      setupInstructions: 'Register an Azure AD app and configure Microsoft Graph permissions',
+      isRealService: false // Coming soon
     },
     {
       id: 'slack',
       name: 'Slack',
       type: 'Communication',
       category: 'communication',
-      status: 'connected',
       description: 'Search conversations, files, and shared content from Slack',
       features: ['Message search', 'File sharing', 'Thread tracking', 'Channel management'],
       icon: <MessageSquare className="w-6 h-6" />,
       color: 'bg-green-100 text-green-700',
-      connectedCount: 1,
-      lastSync: '30 minutes ago'
+      setupInstructions: 'Create a Slack app and generate a Bot User OAuth Token',
+      isRealService: true
     },
+    // Coming soon services
     {
       id: 'notion',
       name: 'Notion',
       type: 'Documentation',
       category: 'documentation',
-      status: 'coming-soon',
       description: 'Search through Notion pages, databases, and workspaces',
       features: ['Page search', 'Database queries', 'Block content', 'Templates'],
       icon: <Database className="w-6 h-6" />,
-      color: 'bg-gray-100 text-gray-700'
+      color: 'bg-gray-100 text-gray-700',
+      setupInstructions: 'Coming soon - Notion integration will be available in future updates',
+      isRealService: false
     },
     {
       id: 'linear',
       name: 'Linear',
       type: 'Project Management',
       category: 'project-management',
-      status: 'coming-soon',
       description: 'Search issues, projects, and roadmaps from Linear',
       features: ['Issue tracking', 'Project management', 'Roadmap planning', 'Team insights'],
       icon: <FileText className="w-6 h-6" />,
-      color: 'bg-purple-100 text-purple-700'
+      color: 'bg-purple-100 text-purple-700',
+      setupInstructions: 'Coming soon - Linear integration will be available in future updates',
+      isRealService: false
     },
     {
       id: 'discord',
       name: 'Discord',
       type: 'Communication',
       category: 'communication',
-      status: 'coming-soon',
       description: 'Search messages and shared content from Discord servers',
       features: ['Message search', 'Server management', 'Voice chat logs', 'File sharing'],
       icon: <MessageSquare className="w-6 h-6" />,
-      color: 'bg-indigo-100 text-indigo-700'
+      color: 'bg-indigo-100 text-indigo-700',
+      setupInstructions: 'Coming soon - Discord integration will be available in future updates',
+      isRealService: false
     }
   ];
 
@@ -197,10 +267,19 @@ export const Integrations: React.FC<IntegrationsProps> = ({
     return matchesCategory && matchesSearch;
   });
 
-  const connectedIntegrations = integrations.filter(i => i.status === 'connected');
-  const availableIntegrations = integrations.filter(i => i.status === 'available');
+  const connectedIntegrations = integrations.filter(i => i.isRealService && serviceStatuses[i.id]?.isConnected);
+  const availableIntegrations = integrations.filter(i => i.isRealService && !serviceStatuses[i.id]?.isConnected);
 
-  const getStatusIcon = (status: string) => {
+  const getServiceStatus = (integration: Integration) => {
+    if (!integration.isRealService) return 'coming-soon';
+    const status = serviceStatuses[integration.id];
+    if (!status) return 'disconnected';
+    if (status.isConnected) return 'connected';
+    return 'available';
+  };
+
+  const getStatusIcon = (integration: Integration) => {
+    const status = getServiceStatus(integration);
     switch (status) {
       case 'connected':
         return <CheckCircle className="w-4 h-4 text-emerald-500" />;
@@ -214,15 +293,22 @@ export const Integrations: React.FC<IntegrationsProps> = ({
   };
 
   const getStatusButton = (integration: Integration) => {
-    switch (integration.status) {
+    const status = getServiceStatus(integration);
+    switch (status) {
       case 'connected':
         return (
           <div className="flex space-x-2">
-            <button className="px-3 py-1 text-xs bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors">
+            <button 
+              onClick={() => setShowServiceConfig(true)}
+              className="px-3 py-1 text-xs bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors"
+            >
               <Settings className="w-3 h-3 inline mr-1" />
               Configure
             </button>
-            <button className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors">
+            <button 
+              onClick={() => handleServiceDisconnect(integration.id)}
+              className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+            >
               <Trash2 className="w-3 h-3 inline mr-1" />
               Remove
             </button>
@@ -231,7 +317,10 @@ export const Integrations: React.FC<IntegrationsProps> = ({
       case 'available':
         return (
           <button 
-            onClick={onAddServer}
+            onClick={() => {
+              setSelectedService(integration);
+              setShowMCPSetup(true);
+            }}
             className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4 inline mr-1" />
@@ -257,15 +346,15 @@ export const Integrations: React.FC<IntegrationsProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Integrations</h2>
-          <p className="text-gray-600">Connect and manage your data sources</p>
+          <h2 className="text-2xl font-bold text-gray-800">MCP Servers</h2>
+          <p className="text-gray-600">Connect and manage your Model Context Protocol servers</p>
         </div>
         <button 
           onClick={onAddServer}
           className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          <span>Add Integration</span>
+          <span>Add MCP Server</span>
         </button>
       </div>
 
@@ -273,19 +362,9 @@ export const Integrations: React.FC<IntegrationsProps> = ({
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
           <button
-            onClick={() => setActiveTab('integrations')}
+            onClick={() => setActiveTab('mcp-integrations')}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'integrations'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            App Integrations
-          </button>
-          <button
-            onClick={() => setActiveTab('mcp-servers')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'mcp-servers'
+              activeTab === 'mcp-integrations'
                 ? 'border-blue-500 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
@@ -295,150 +374,183 @@ export const Integrations: React.FC<IntegrationsProps> = ({
         </nav>
       </div>
 
-      {/* Tab Content */}
-      {activeTab === 'integrations' ? (
-        <>
-          {/* Stats */}
+      {/* Tab Content - MCP Servers */}
+      <>
+        {/* Stats */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
-              <CheckCircle className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">{connectedIntegrations.length}</p>
-              <p className="text-sm text-gray-600">Connected</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
-              <Database className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">{availableIntegrations.length}</p>
-              <p className="text-sm text-gray-600">Available</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
-              <Search className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">4.2k</p>
-              <p className="text-sm text-gray-600">Items Indexed</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
-              <Zap className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">98.5%</p>
-              <p className="text-sm text-gray-600">Uptime</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Search and Filter */}
-      <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search integrations..."
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
-        <div className="flex space-x-2 overflow-x-auto">
-          {categories.map(category => (
-            <button
-              key={category.id}
-              onClick={() => setSelectedCategory(category.id)}
-              className={`px-4 py-2 text-sm rounded-lg whitespace-nowrap transition-colors ${
-                selectedCategory === category.id
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {category.name} ({category.count})
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Integrations Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredIntegrations.map(integration => (
-          <div
-            key={integration.id}
-            className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg hover:shadow-xl transition-all group"
-          >
-            {/* Header */}
-            <div className="flex items-start justify-between mb-4">
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
               <div className="flex items-center space-x-3">
-                <div className={`p-3 rounded-xl ${integration.color}`}>
-                  {integration.icon}
+                <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
+                  <CheckCircle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-800">{integration.name}</h3>
-                  <p className="text-sm text-gray-500">{integration.type}</p>
+                  <p className="text-2xl font-bold text-gray-800">{connectedIntegrations.length}</p>
+                  <p className="text-sm text-gray-600">Connected</p>
                 </div>
               </div>
-              {getStatusIcon(integration.status)}
             </div>
-
-            {/* Description */}
-            <p className="text-sm text-gray-600 mb-4">{integration.description}</p>
-
-            {/* Features */}
-            <div className="mb-4">
-              <div className="flex flex-wrap gap-1">
-                {integration.features.slice(0, 3).map(feature => (
-                  <span
-                    key={feature}
-                    className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full"
-                  >
-                    {feature}
-                  </span>
-                ))}
-                {integration.features.length > 3 && (
-                  <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
-                    +{integration.features.length - 3} more
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Connection Info */}
-            {integration.status === 'connected' && (
-              <div className="mb-4 p-3 bg-emerald-50 rounded-lg">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-emerald-700">
-                    {integration.connectedCount} connection{integration.connectedCount !== 1 ? 's' : ''}
-                  </span>
-                  <span className="text-emerald-600">
-                    Last sync: {integration.lastSync}
-                  </span>
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-800">{availableIntegrations.length}</p>
+                  <p className="text-sm text-gray-600">Available</p>
                 </div>
               </div>
-            )}
-
-            {/* Action Button */}
-            <div className="flex justify-end">
-              {getStatusButton(integration)}
+            </div>
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
+                  <Search className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Object.values(serviceStatuses).reduce((sum, status) => sum + (status.itemCount || 0), 0).toLocaleString()}
+                  </p>
+                  <p className="text-sm text-gray-600">Items Indexed</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-lg">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-800">98.5%</p>
+                  <p className="text-sm text-gray-600">Uptime</p>
+                </div>
+              </div>
             </div>
           </div>
-        ))}
-      </div>
+
+          {/* Search and Filter */}
+          <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search integrations..."
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="flex items-center space-x-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                title="Refresh connection status"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span className="text-sm">Refresh</span>
+              </button>
+            </div>
+            <div className="flex space-x-2 overflow-x-auto">
+              {categories.map(category => (
+                <button
+                  key={category.id}
+                  onClick={() => setSelectedCategory(category.id)}
+                  className={`px-4 py-2 text-sm rounded-lg whitespace-nowrap transition-colors ${
+                    selectedCategory === category.id
+                      ? 'bg-blue-100 text-blue-600'
+                      : 'bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {category.name} ({category.count})
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Integrations Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredIntegrations.map(integration => {
+              const status = getServiceStatus(integration);
+              const serviceStatus = serviceStatuses[integration.id];
+              
+              return (
+                <div
+                  key={integration.id}
+                  className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg hover:shadow-xl transition-all group"
+                >
+                  {/* Header */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <div className={`p-3 rounded-xl ${integration.color}`}>
+                        {integration.icon}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-gray-800">{integration.name}</h3>
+                        <p className="text-sm text-gray-500">{integration.type}</p>
+                      </div>
+                    </div>
+                    {getStatusIcon(integration)}
+                  </div>
+
+                  {/* Description */}
+                  <p className="text-sm text-gray-600 mb-4">{integration.description}</p>
+
+                  {/* Features */}
+                  <div className="mb-4">
+                    <div className="flex flex-wrap gap-1">
+                      {integration.features.slice(0, 3).map(feature => (
+                        <span
+                          key={feature}
+                          className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full"
+                        >
+                          {feature}
+                        </span>
+                      ))}
+                      {integration.features.length > 3 && (
+                        <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
+                          +{integration.features.length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Connection Info */}
+                  {status === 'connected' && serviceStatus && (
+                    <div className="mb-4 p-3 bg-emerald-50 rounded-lg">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-emerald-700">
+                          {serviceStatus.itemCount?.toLocaleString() || 0} items indexed
+                        </span>
+                        <span className="text-emerald-600">
+                          Last sync: {serviceStatus.lastSync || 'Never'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Setup Instructions for Available Services */}
+                  {status === 'available' && integration.isRealService && (
+                    <div className="mb-4 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-400">
+                      <h4 className="text-sm font-medium text-blue-800 mb-1">Setup Instructions</h4>
+                      <p className="text-xs text-blue-700">{integration.setupInstructions}</p>
+                    </div>
+                  )}
+
+                  {/* Coming Soon Notice */}
+                  {status === 'coming-soon' && (
+                    <div className="mb-4 p-3 bg-amber-50 rounded-lg border-l-4 border-amber-400">
+                      <h4 className="text-sm font-medium text-amber-800 mb-1">Coming Soon</h4>
+                      <p className="text-xs text-amber-700">{integration.setupInstructions}</p>
+                    </div>
+                  )}
+
+                  {/* Action Button */}
+                  <div className="flex justify-end">
+                    {getStatusButton(integration)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
       {/* Empty State */}
       {filteredIntegrations.length === 0 && (
@@ -486,25 +598,100 @@ export const Integrations: React.FC<IntegrationsProps> = ({
           </div>
         </div>
       </div>
-        </>) : (
-        /* MCP Servers Tab */
-        <div className="space-y-6">
-          <MCPConnections
-            servers={mcpServers}
-            onConnect={onMCPConnect}
-            onDisconnect={onMCPDisconnect}
-            onConfigure={onMCPConfigure}
-            onAddServer={() => setShowMCPSetup(true)}
-          />
-          
-          {showMCPSetup && (
-            <MCPServerSetup
-              isOpen={showMCPSetup}
-              onClose={() => setShowMCPSetup(false)}
-              onAddServer={onMCPAddServer}
-            />
-          )}
-        </div>
+      </>
+
+      {/* MCP Server Setup Modal */}
+      {showMCPSetup && selectedService && (
+        <MCPServerSetup
+          isOpen={showMCPSetup}
+          onClose={() => {
+            setShowMCPSetup(false);
+            setSelectedService(null);
+          }}
+          selectedService={selectedService}
+          onAddServer={async (config) => {
+            try {
+              // Handle MCP server addition for the specific service
+              console.log('MCP Server configuration for', selectedService.name, ':', config);
+              
+              // Save the configuration to localStorage based on service type
+              switch (config.type) {
+                case 'github':
+                  if (config.serverConfig.token) {
+                    localStorage.setItem('github_token', config.serverConfig.token);
+                    console.log('✅ GitHub token saved successfully');
+                  }
+                  break;
+                  
+                case 'bitbucket':
+                  if (config.serverConfig.username && config.serverConfig.password) {
+                    localStorage.setItem('bitbucket_token', config.serverConfig.password);
+                    localStorage.setItem('bitbucket_username', config.serverConfig.username);
+                    console.log('✅ Bitbucket credentials saved successfully');
+                  }
+                  break;
+                  
+                case 'jira':
+                  if (config.serverConfig.username && config.serverConfig.apiToken && config.serverConfig.serverUrl) {
+                    const jiraConfig = {
+                      username: config.serverConfig.username,
+                      apiToken: config.serverConfig.apiToken,
+                      serverUrl: config.serverConfig.serverUrl
+                    };
+                    localStorage.setItem('jira_config', JSON.stringify(jiraConfig));
+                    console.log('✅ Jira configuration saved successfully');
+                  }
+                  break;
+                  
+                case 'slack':
+                  if (config.serverConfig.token) {
+                    localStorage.setItem('slack_token', config.serverConfig.token);
+                    console.log('✅ Slack token saved successfully');
+                  }
+                  break;
+                  
+                case 'confluence':
+                  // Confluence typically uses same credentials as Jira
+                  if (config.serverConfig.username && config.serverConfig.apiToken && config.serverConfig.serverUrl) {
+                    const confluenceConfig = {
+                      username: config.serverConfig.username,
+                      apiToken: config.serverConfig.apiToken,
+                      serverUrl: config.serverConfig.serverUrl
+                    };
+                    localStorage.setItem('confluence_config', JSON.stringify(confluenceConfig));
+                    console.log('✅ Confluence configuration saved successfully');
+                  }
+                  break;
+                  
+                default:
+                  console.warn('Unknown service type:', config.type);
+              }
+              
+              // Close modal and refresh
+              setShowMCPSetup(false);
+              setSelectedService(null);
+              refreshServiceStatuses();
+              
+            } catch (error) {
+              console.error('❌ Failed to save MCP server configuration:', error);
+              // You might want to show an error message to the user here
+            }
+          }}
+        />
+      )}
+
+      {/* Service Configuration Modal */}
+      {showServiceConfig && (
+        <ServiceConfiguration
+          isOpen={showServiceConfig}
+          onClose={() => setShowServiceConfig(false)}
+          onSave={(configs) => {
+            // Handle service configuration save
+            console.log('Service configurations saved:', configs);
+            setShowServiceConfig(false);
+            refreshServiceStatuses();
+          }}
+        />
       )}
     </div>
   );

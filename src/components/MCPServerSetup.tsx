@@ -5,7 +5,6 @@ import {
   FileText, 
   Database, 
   Key, 
-  User, 
   Globe,
   Eye,
   EyeOff,
@@ -17,6 +16,18 @@ import { MCPServerConfig } from '../services/mcpClient';
 interface MCPServerSetupProps {
   isOpen: boolean;
   onClose: () => void;
+  selectedService?: {
+    id: string;
+    name: string;
+    type: string;
+    category: 'development' | 'communication' | 'documentation' | 'project-management';
+    description: string;
+    features: string[];
+    icon: React.ReactNode;
+    color: string;
+    setupInstructions: string;
+    isRealService: boolean;
+  };
   onAddServer: (config: {
     name: string;
     type: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
@@ -27,11 +38,12 @@ interface MCPServerSetupProps {
 export const MCPServerSetup: React.FC<MCPServerSetupProps> = ({
   isOpen,
   onClose,
+  selectedService,
   onAddServer
 }) => {
-  const [selectedType, setSelectedType] = useState<string>('');
-  const [serverName, setServerName] = useState('');
-  const [serverUrl, setServerUrl] = useState('');
+  const [selectedType, setSelectedType] = useState<string>(selectedService?.id || '');
+  const [serverName, setServerName] = useState(selectedService ? `My ${selectedService.name} Server` : '');
+  const [serverUrl, setServerUrl] = useState(selectedService?.id === 'github' ? 'https://api.github.com' : '');
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -145,7 +157,7 @@ export const MCPServerSetup: React.FC<MCPServerSetupProps> = ({
 
       await onAddServer({
         name: serverName,
-        type: selectedType as any,
+        type: selectedType as 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack',
         serverConfig
       });
 
@@ -198,36 +210,53 @@ export const MCPServerSetup: React.FC<MCPServerSetupProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Server Type Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Select Service Type
-            </label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {serverTypes.map(type => (
-                <button
-                  key={type.id}
-                  type="button"
-                  onClick={() => handleTypeSelect(type.id)}
-                  className={`p-4 border-2 rounded-xl text-left transition-all ${
-                    selectedType === type.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3 mb-2">
-                    <div className={`p-2 rounded-lg ${
-                      selectedType === type.id ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {type.icon}
+          {/* Server Type Selection - Only show if no service is pre-selected */}
+          {!selectedService && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Select Service Type
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {serverTypes.map(type => (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => handleTypeSelect(type.id)}
+                    className={`p-4 border-2 rounded-xl text-left transition-all ${
+                      selectedType === type.id
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3 mb-2">
+                      <div className={`p-2 rounded-lg ${
+                        selectedType === type.id ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {type.icon}
+                      </div>
+                      <h3 className="font-medium text-gray-800">{type.name}</h3>
                     </div>
-                    <h3 className="font-medium text-gray-800">{type.name}</h3>
-                  </div>
-                  <p className="text-xs text-gray-600">{type.description}</p>
-                </button>
-              ))}
+                    <p className="text-xs text-gray-600">{type.description}</p>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Show selected service info when pre-selected */}
+          {selectedService && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                  {selectedService.icon}
+                </div>
+                <div>
+                  <h3 className="font-medium text-gray-800">{selectedService.name}</h3>
+                  <p className="text-sm text-blue-600">Setting up MCP server connection</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {selectedServerType && (
             <>

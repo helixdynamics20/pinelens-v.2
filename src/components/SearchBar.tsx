@@ -42,7 +42,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   }, []);
   
   // Search mode and AI options
-  const [searchMode, setSearchMode] = useState<'unified' | 'web' | 'ai' | 'apps'>('unified');
+  const [searchMode, setSearchMode] = useState<'unified' | 'web' | 'ai' | 'apps'>('apps');
   const [aiOptions, setAiOptions] = useState({
     models: selectedModel ? [selectedModel] : [],
     temperature: 0.7

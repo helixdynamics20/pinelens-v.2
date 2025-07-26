@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Eye, EyeOff, Check, X, AlertCircle } from 'lucide-react';
+import { Settings, Eye, EyeOff, Check, X, AlertCircle, Zap, ArrowRight } from 'lucide-react';
+import { GitHubMCPToolsConfig } from './GitHubMCPToolsConfig';
 
 interface ServiceConfig {
   id: string;
@@ -79,6 +80,12 @@ export const ServiceConfiguration: React.FC<ServiceConfigurationProps> = ({
   ]);
 
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+  const [showGitHubTools, setShowGitHubTools] = useState(false);
+  const [gitHubStats, setGitHubStats] = useState({
+    totalTools: 19,
+    enabledTools: 15,
+    dangerousTools: 3
+  });
 
   useEffect(() => {
     // Load saved configurations from localStorage
@@ -90,7 +97,30 @@ export const ServiceConfiguration: React.FC<ServiceConfigurationProps> = ({
         console.error('Failed to load service configurations:', error);
       }
     }
+
+    // Load GitHub tools stats
+    const savedTools = localStorage.getItem('github_mcp_tools');
+    if (savedTools) {
+      try {
+        const tools = JSON.parse(savedTools);
+        setGitHubStats({
+          totalTools: tools.length,
+          enabledTools: tools.filter((t: { enabled: boolean }) => t.enabled).length,
+          dangerousTools: tools.filter((t: { enabled: boolean; dangerous?: boolean }) => t.enabled && t.dangerous).length
+        });
+      } catch (error) {
+        console.error('Failed to parse GitHub tools:', error);
+      }
+    }
   }, []);
+
+  const handleGitHubToolsSave = (tools: { enabled: boolean; dangerous?: boolean }[]) => {
+    setGitHubStats({
+      totalTools: tools.length,
+      enabledTools: tools.filter(t => t.enabled).length,
+      dangerousTools: tools.filter(t => t.enabled && t.dangerous).length
+    });
+  };
 
   const updateService = (serviceId: string, updates: Partial<ServiceConfig>) => {
     setServices(prev => prev.map(service => 
@@ -333,6 +363,46 @@ export const ServiceConfiguration: React.FC<ServiceConfigurationProps> = ({
                           </div>
                         )}
 
+                        {/* GitHub MCP Tools Configuration */}
+                        {service.type === 'github' && service.status === 'connected' && (
+                          <div className="md:col-span-2 mt-4 border border-purple-200 rounded-lg p-4 bg-purple-50">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
+                                  <Zap className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <h4 className="font-semibold text-gray-800">GitHub MCP Tools</h4>
+                                  <p className="text-sm text-gray-600">Configure available GitHub MCP tools</p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setShowGitHubTools(true)}
+                                className="flex items-center space-x-2 px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
+                              >
+                                <Settings className="w-4 h-4" />
+                                <span>Configure</span>
+                                <ArrowRight className="w-4 h-4" />
+                              </button>
+                            </div>
+                            
+                            <div className="grid grid-cols-3 gap-3 text-center">
+                              <div className="p-2 bg-white rounded border">
+                                <div className="text-lg font-bold text-blue-600">{gitHubStats.totalTools}</div>
+                                <div className="text-xs text-gray-600">Total Tools</div>
+                              </div>
+                              <div className="p-2 bg-white rounded border">
+                                <div className="text-lg font-bold text-green-600">{gitHubStats.enabledTools}</div>
+                                <div className="text-xs text-gray-600">Enabled</div>
+                              </div>
+                              <div className="p-2 bg-white rounded border">
+                                <div className="text-lg font-bold text-red-600">{gitHubStats.dangerousTools}</div>
+                                <div className="text-xs text-gray-600">Dangerous</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Jira/Confluence - Username, Password, Domain */}
                         {(service.type === 'jira' || service.type === 'confluence') && (
                           <>
@@ -403,6 +473,13 @@ export const ServiceConfiguration: React.FC<ServiceConfigurationProps> = ({
           </div>
         </div>
       </div>
+
+      {/* GitHub MCP Tools Configuration Modal */}
+      <GitHubMCPToolsConfig
+        isOpen={showGitHubTools}
+        onClose={() => setShowGitHubTools(false)}
+        onSave={handleGitHubToolsSave}
+      />
     </div>
   );
 };

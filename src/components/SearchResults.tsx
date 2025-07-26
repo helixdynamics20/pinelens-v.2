@@ -756,7 +756,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
                       </div>
                     </div>
                   ) : (
-                    // Regular content display for non-AI results with Quick Actions
+                    // Regular content display for non-AI results
                     <div>
                       <div className="mb-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-gray-700 leading-relaxed">
@@ -764,66 +764,68 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
                         </p>
                       </div>
                       
-                      {/* Quick Actions Bar */}
-                      <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                        <div className="flex flex-wrap items-center justify-between gap-4">
-                          <div className="flex items-center space-x-4">
-                            <span className="text-sm font-medium text-blue-800">Quick Actions:</span>
-                            <div className="flex space-x-2">
-                              <button
-                                onClick={() => {
-                                  if (result.sourceType === 'github' && result.metadata?.repository) {
-                                    copyToClipboard(`git clone https://github.com/${result.metadata.repository}.git`, `${result.id}-clone`);
-                                  } else {
-                                    copyToClipboard(result.url, `${result.id}-clone`);
-                                  }
-                                }}
-                                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-                              >
-                                <GitBranch className="w-4 h-4" />
-                                <span>{copiedId === `${result.id}-clone` ? 'Cloned!' : 'Clone'}</span>
-                              </button>
-                              
-                              <button
-                                onClick={() => copyToClipboard(result.url, `${result.id}-url`)}
-                                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
-                              >
-                                {copiedId === `${result.id}-url` ? (
-                                  <>
-                                    <Check className="w-4 h-4" />
-                                    <span>Copied!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-4 h-4" />
-                                    <span>Copy Link</span>
-                                  </>
-                                )}
-                              </button>
+                      {/* Quick Actions Bar - Only show for non-web results */}
+                      {result.sourceType !== 'web' && (
+                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                          <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div className="flex items-center space-x-4">
+                              <span className="text-sm font-medium text-blue-800">Quick Actions:</span>
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => {
+                                    if (result.sourceType === 'github' && result.metadata?.repository) {
+                                      copyToClipboard(`git clone https://github.com/${result.metadata.repository}.git`, `${result.id}-clone`);
+                                    } else {
+                                      copyToClipboard(result.url, `${result.id}-clone`);
+                                    }
+                                  }}
+                                  className="inline-flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                  <GitBranch className="w-4 h-4" />
+                                  <span>{copiedId === `${result.id}-clone` ? 'Cloned!' : 'Clone'}</span>
+                                </button>
+                                
+                                <button
+                                  onClick={() => copyToClipboard(result.url, `${result.id}-url`)}
+                                  className="inline-flex items-center space-x-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                  {copiedId === `${result.id}-url` ? (
+                                    <>
+                                      <Check className="w-4 h-4" />
+                                      <span>Copied!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-4 h-4" />
+                                      <span>Copy Link</span>
+                                    </>
+                                  )}
+                                </button>
 
-                              <a
-                                href={result.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                                <span>Open</span>
-                              </a>
+                                <a
+                                  href={result.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center space-x-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                  <span>Open</span>
+                                </a>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center space-x-2 text-xs text-gray-600">
+                              <Clock className="w-3 h-3" />
+                              <span>
+                                Updated {new Date(result.date).toLocaleDateString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric' 
+                                })}
+                              </span>
                             </div>
                           </div>
-                          
-                          <div className="flex items-center space-x-2 text-xs text-gray-600">
-                            <Clock className="w-3 h-3" />
-                            <span>
-                              Updated {new Date(result.date).toLocaleDateString('en-US', { 
-                                month: 'short', 
-                                day: 'numeric' 
-                              })}
-                            </span>
-                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
                 </div>
