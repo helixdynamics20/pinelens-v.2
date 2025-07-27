@@ -16,11 +16,12 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { MCPServerSetup } from './MCPServerSetup';
+
 import { ServiceConfiguration } from './ServiceConfiguration';
+import { getMCPServiceStatuses } from '../services/mcpIntegrationStatus';
 
 interface IntegrationsProps {
   isVisible: boolean;
-  onAddServer: () => void;
 }
 
 interface RealServiceStatus {
@@ -45,8 +46,7 @@ interface Integration {
 }
 
 export const Integrations: React.FC<IntegrationsProps> = ({ 
-  isVisible, 
-  onAddServer
+  isVisible
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,59 +57,49 @@ export const Integrations: React.FC<IntegrationsProps> = ({
   const [serviceStatuses, setServiceStatuses] = useState<Record<string, RealServiceStatus>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Check real service status
+
+  // Check real service status (merge MCP client state with localStorage for config)
   const checkServiceStatus = (serviceId: string): RealServiceStatus => {
+    const mcpStatuses = getMCPServiceStatuses();
+    const mcp = mcpStatuses[serviceId];
+    // Local config presence
+    let isConfigured = false;
     switch (serviceId) {
-      case 'github': {
-        const githubToken = localStorage.getItem('github_token');
-        return {
-          isConfigured: !!githubToken,
-          isConnected: !!githubToken,
-          lastSync: githubToken ? '2 minutes ago' : undefined,
-          itemCount: githubToken ? 847 : 0
-        };
-      }
-      
-      case 'bitbucket': {
-        const bitbucketToken = localStorage.getItem('bitbucket_token');
-        return {
-          isConfigured: !!bitbucketToken,
-          isConnected: !!bitbucketToken,
-          lastSync: bitbucketToken ? '5 minutes ago' : undefined,
-          itemCount: bitbucketToken ? 324 : 0
-        };
-      }
-      
-      case 'jira': {
-        const jiraConfig = localStorage.getItem('jira_config');
-        return {
-          isConfigured: !!jiraConfig,
-          isConnected: !!jiraConfig,
-          lastSync: jiraConfig ? '1 hour ago' : undefined,
-          itemCount: jiraConfig ? 156 : 0
-        };
-      }
-      
-      case 'slack': {
-        const slackToken = localStorage.getItem('slack_token');
-        return {
-          isConfigured: !!slackToken,
-          isConnected: !!slackToken,
-          lastSync: slackToken ? '30 minutes ago' : undefined,
-          itemCount: slackToken ? 1243 : 0
-        };
-      }
-      
+      case 'github':
+        isConfigured = !!localStorage.getItem('github_token');
+        break;
+      case 'bitbucket':
+        isConfigured = !!localStorage.getItem('bitbucket_token');
+        break;
+      case 'jira':
+        isConfigured = !!localStorage.getItem('jira_config');
+        break;
+      case 'slack':
+        isConfigured = !!localStorage.getItem('slack_token');
+        break;
+      case 'confluence':
+        isConfigured = !!localStorage.getItem('confluence_config');
+        break;
       default:
-        return {
-          isConfigured: false,
-          isConnected: false,
-          itemCount: 0
-        };
+        isConfigured = false;
     }
+    if (mcp) {
+      return {
+        isConfigured,
+        isConnected: mcp.isConnected,
+        lastSync: mcp.lastSync,
+        itemCount: mcp.itemCount
+      };
+    }
+    // fallback to local config only
+    return {
+      isConfigured,
+      isConnected: false,
+      itemCount: 0
+    };
   };
 
-  // Update service statuses
+  // Update service statuses (use MCP client state)
   const refreshServiceStatuses = () => {
     const statuses: Record<string, RealServiceStatus> = {};
     ['github', 'bitbucket', 'jira', 'confluence', 'teams', 'slack'].forEach(serviceId => {
@@ -349,13 +339,6 @@ export const Integrations: React.FC<IntegrationsProps> = ({
           <h2 className="text-2xl font-bold text-gray-800">MCP Servers</h2>
           <p className="text-gray-600">Connect and manage your Model Context Protocol servers</p>
         </div>
-        <button 
-          onClick={onAddServer}
-          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add MCP Server</span>
-        </button>
       </div>
 
       {/* Tab Navigation */}
@@ -622,7 +605,6 @@ export const Integrations: React.FC<IntegrationsProps> = ({
                     console.log('✅ GitHub token saved successfully');
                   }
                   break;
-                  
                 case 'bitbucket':
                   if (config.serverConfig.username && config.serverConfig.password) {
                     localStorage.setItem('bitbucket_token', config.serverConfig.password);
@@ -630,48 +612,56 @@ export const Integrations: React.FC<IntegrationsProps> = ({
                     console.log('✅ Bitbucket credentials saved successfully');
                   }
                   break;
-                  
                 case 'jira':
-                  if (config.serverConfig.username && config.serverConfig.apiToken && config.serverConfig.serverUrl) {
+                  if (config.serverConfig.username && config.serverConfig.token && config.serverConfig.serverUrl) {
                     const jiraConfig = {
                       username: config.serverConfig.username,
-                      apiToken: config.serverConfig.apiToken,
+                      apiToken: config.serverConfig.token,
                       serverUrl: config.serverConfig.serverUrl
                     };
                     localStorage.setItem('jira_config', JSON.stringify(jiraConfig));
                     console.log('✅ Jira configuration saved successfully');
                   }
                   break;
-                  
                 case 'slack':
                   if (config.serverConfig.token) {
                     localStorage.setItem('slack_token', config.serverConfig.token);
                     console.log('✅ Slack token saved successfully');
                   }
                   break;
-                  
                 case 'confluence':
-                  // Confluence typically uses same credentials as Jira
-                  if (config.serverConfig.username && config.serverConfig.apiToken && config.serverConfig.serverUrl) {
+                  if (config.serverConfig.username && config.serverConfig.token && config.serverConfig.serverUrl) {
                     const confluenceConfig = {
                       username: config.serverConfig.username,
-                      apiToken: config.serverConfig.apiToken,
+                      apiToken: config.serverConfig.token,
                       serverUrl: config.serverConfig.serverUrl
                     };
                     localStorage.setItem('confluence_config', JSON.stringify(confluenceConfig));
                     console.log('✅ Confluence configuration saved successfully');
                   }
                   break;
-                  
                 default:
                   console.warn('Unknown service type:', config.type);
               }
-              
+
+              // Also add the server to mcpClient and connect it
+              try {
+                const { mcpClient } = await import('../services/mcpClient');
+                const serverId = await mcpClient.addServer({
+                  name: selectedService.name,
+                  type: config.type,
+                  serverConfig: config.serverConfig
+                });
+                await mcpClient.connectServer(serverId);
+                console.log('✅ MCP server added and connected:', serverId);
+              } catch (err) {
+                console.error('❌ Failed to add/connect MCP server:', err);
+              }
+
               // Close modal and refresh
               setShowMCPSetup(false);
               setSelectedService(null);
               refreshServiceStatuses();
-              
             } catch (error) {
               console.error('❌ Failed to save MCP server configuration:', error);
               // You might want to show an error message to the user here

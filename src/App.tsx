@@ -5,14 +5,13 @@ import { SearchBar } from './components/SearchBar';
 import { SearchResults } from './components/SearchResults';
 import { EnhancedAnalytics } from './components/EnhancedAnalytics';
 import { Integrations } from './components/Integrations';
-import { ServiceConfiguration } from './components/ServiceConfiguration';
 import { GitHubTokenSetup } from './components/GitHubTokenSetup';
 import { APIKeySetup } from './components/APIKeySetup';
 import { DebugPanel } from './components/DebugPanel';
 import { unifiedSearchService, UnifiedSearchResult } from './services/unifiedSearchService';
 import { realAPIService } from './services/realAPIService';
 import { geminiService } from './services/geminiService';
-import { mcpClient, MCPServer, MCPServerConfig } from './services/mcpClient';
+import { mcpClient } from './services/mcpClient';
 
 interface SearchOptions {
   searchMode?: string;
@@ -33,11 +32,12 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<'search' | 'analytics' | 'integrations'>('search');
-  const [showServiceConfig, setShowServiceConfig] = useState(false);
   const [showGitHubSetup, setShowGitHubSetup] = useState(false);
   const [showAPIKeySetup, setShowAPIKeySetup] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [lastQuery, setLastQuery] = useState('');
+  // Conversational AI chat state (for chat UI)
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'ai', content: string }[]>([]);
   
   // Get available models based on user's API keys
   const [availableModels, setAvailableModels] = useState<{ 
@@ -50,71 +50,10 @@ function App() {
     contextLength?: number;
   }[]>([]);
   
-  // Get connected services
-  const [connectedSources, setConnectedSources] = useState<string[]>([]);
-  
-  // MCP Server state management
-  const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
+  // Get connected MCP services (status === 'connected')
+  const [connectedServicesCount, setConnectedServicesCount] = useState(0);
 
-  const loadConnectedSources = () => {
-    const services = realAPIService.getEnabledServices();
-    setConnectedSources(services.map(s => s.type));
-  };
 
-  const loadMCPServers = () => {
-    const servers = mcpClient.getServers();
-    setMcpServers(servers);
-  };
-
-  // MCP Server event handlers
-  const handleMCPConnect = async (serverId: string) => {
-    try {
-      await mcpClient.connectServer(serverId);
-      loadMCPServers();
-    } catch (error) {
-      console.error('Failed to connect MCP server:', error);
-      setError(`Failed to connect to server: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
-
-  const handleMCPDisconnect = async (serverId: string) => {
-    try {
-      await mcpClient.disconnectServer(serverId);
-      loadMCPServers();
-    } catch (error) {
-      console.error('Failed to disconnect MCP server:', error);
-    }
-  };
-
-  const handleMCPConfigure = (serverId: string) => {
-    // TODO: Implement server configuration editing
-    console.log('Configure server:', serverId);
-  };
-
-  const handleMCPAddServer = async (config: {
-    name: string;
-    type: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
-    serverConfig: MCPServerConfig;
-  }) => {
-    try {
-      const serverId = await mcpClient.addServer(config);
-      console.log('Added MCP server:', serverId);
-      loadMCPServers();
-      
-      // If it's a GitHub server, auto-connect it
-      if (config.type === 'github') {
-        try {
-          await mcpClient.connectServer(serverId);
-          loadMCPServers();
-        } catch (error) {
-          console.warn('Added GitHub server but connection failed:', error);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to add MCP server:', error);
-      setError(`Failed to add server: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
 
   const loadAvailableModels = useCallback(async () => {
     try {
@@ -168,42 +107,29 @@ function App() {
     }
   }, [selectedModel]);
 
+  // Update connected services count from MCP client
+  const loadConnectedServicesCount = () => {
+    const servers = mcpClient.getServers();
+    const connected = servers.filter(s => s.status === 'connected');
+    setConnectedServicesCount(connected.length);
+  };
+
   useEffect(() => {
-    loadConnectedSources();
+    // loadConnectedSources(); // No longer needed
     loadAvailableModels();
-    loadMCPServers();
+    loadConnectedServicesCount();
 
-    // Set up MCP client event listeners
-    const handleServerStatusChanged = (server: MCPServer) => {
-      console.log('MCP Server status changed:', server.name, server.status);
-      loadMCPServers();
-    };
-
-    const handleServerAdded = (server: MCPServer) => {
-      console.log('MCP Server added:', server.name);
-      loadMCPServers();
-    };
-
-    const handleServerRemoved = (serverId: string) => {
-      console.log('MCP Server removed:', serverId);
-      loadMCPServers();
-    };
-
-    mcpClient.on('serverStatusChanged', handleServerStatusChanged);
-    mcpClient.on('serverAdded', handleServerAdded);
-    mcpClient.on('serverRemoved', handleServerRemoved);
-
-    // Cleanup event listeners on unmount
+    // Optionally, listen for server status changes to update count live
+    const handler = () => loadConnectedServicesCount();
+    mcpClient.on('serverStatusChanged', handler);
+    mcpClient.on('serverAdded', handler);
+    mcpClient.on('serverRemoved', handler);
     return () => {
-      mcpClient.removeListener('serverStatusChanged', handleServerStatusChanged);
-      mcpClient.removeListener('serverAdded', handleServerAdded);
-      mcpClient.removeListener('serverRemoved', handleServerRemoved);
+      mcpClient.removeListener('serverStatusChanged', handler);
+      mcpClient.removeListener('serverAdded', handler);
+      mcpClient.removeListener('serverRemoved', handler);
     };
   }, [loadAvailableModels]);
-
-  const getServiceStatus = () => {
-    return realAPIService.getServiceStatus();
-  };
 
   const handleSearch = async (
     query: string,
@@ -232,18 +158,20 @@ function App() {
 
       let results: UnifiedSearchResult[] = [];
 
-      // Check if this is an AI-focused search that should use Gemini
       if (searchMode === 'ai') {
+        // Conversational AI: maintain chat history
+        setChatHistory(prev => [...prev, { role: 'user', content: query }]);
         try {
+          let conversationPrompt = chatHistory.map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`).join('\n');
+          conversationPrompt += `\nUser: ${query}`;
           if (model.startsWith('gemini-') || model === 'gemini-pro' || model === 'gemini-1.5-pro' || model === 'gemini-1.5-flash') {
             // Use Gemini service for AI response
             console.log(`🤖 Using Gemini model: ${model}`);
-            const aiResponse = await geminiService.generateResponse(model, query, {
-              systemPrompt: 'You are a helpful AI assistant. Provide accurate and concise information.',
+            const aiResponse = await geminiService.generateResponse(model, conversationPrompt, {
+              systemPrompt: 'You are a helpful AI assistant. Provide accurate and concise information. Continue the conversation naturally.',
               temperature: options?.aiOptions?.temperature || 0.7,
               maxTokens: 2048
             });
-
             results = [{
               id: `gemini-${Date.now()}`,
               title: `Gemini AI Response`,
@@ -262,23 +190,21 @@ function App() {
                 searchMode: 'ai'
               }
             }];
+            setChatHistory(prev => [...prev, { role: 'ai', content: aiResponse }]);
           } else {
-            // Fallback to unified search service
             results = await unifiedSearchService.search(query, searchOptions);
           }
         } catch (aiError) {
           console.warn('Gemini AI search failed, falling back to unified search:', aiError);
-          // If it's an API key error, show a helpful message
           if (aiError instanceof Error && aiError.message.includes('API key')) {
             setError(`Gemini API Error: ${aiError.message}`);
             return;
           }
-          // Fallback to unified search
           results = await unifiedSearchService.search(query, searchOptions);
         }
       } else if (searchMode === 'apps') {
-        // Use MCP client for app search with AI processing (VS Code style)
-        console.log('🔍 Using AI-powered MCP client for app search (VS Code style)...');
+        // Debug: Print all MCP servers before search
+        console.log('DEBUG: MCP servers before app search:', mcpClient.getServers());
         try {
           const mcpResults = await mcpClient.search({
             query,
@@ -286,8 +212,6 @@ function App() {
             model,
             searchMode: 'apps'
           });
-
-          // Convert MCP results to UnifiedSearchResult format
           results = mcpResults.map(result => ({
             id: result.id,
             title: result.title,
@@ -303,20 +227,14 @@ function App() {
             metadata: {
               type: String(result.metadata?.type || 'general'),
               ...result.metadata,
-              aiProcessed: true // Mark as AI-processed
+              aiProcessed: true
             },
             accessLevel: 'private' as const
           }));
-
           console.log(`📊 AI-powered MCP search returned ${results.length} results`);
-          
-          // If we have results and AI is available, enhance them with AI formatting
           if (results.length > 0 && (model.startsWith('gemini-') || model === 'gemini-pro' || model === 'gemini-1.5-pro' || model === 'gemini-1.5-flash')) {
             try {
-              // Import the AI query processor for result formatting
               const { aiQueryProcessor } = await import('./services/aiQueryProcessor');
-              
-              // Create a summary result with AI-formatted content
               const aiFormattedContent = await aiQueryProcessor.formatResults(
                 {
                   originalQuery: query,
@@ -328,8 +246,6 @@ function App() {
                 mcpResults,
                 model
               );
-
-              // Add AI-formatted summary as the first result
               results.unshift({
                 id: `ai-summary-${Date.now()}`,
                 title: `📋 Search Summary for "${query}"`,
@@ -352,11 +268,9 @@ function App() {
                 },
                 accessLevel: 'private' as const
               });
-
               console.log('✨ Enhanced results with AI-powered summary');
             } catch (aiError) {
               console.warn('Failed to enhance results with AI formatting:', aiError);
-              // Continue with regular results
             }
           }
         } catch (mcpError) {
@@ -365,9 +279,6 @@ function App() {
           return;
         }
       } else {
-        // Use unified search for web and unified modes
-        console.log(`🌍 ${searchMode === 'unified' ? 'All mode' : searchMode + ' mode'}: Using unified search across all sources`);
-        console.log(`🔧 Search options:`, { searchMode, sources, model });
         results = await unifiedSearchService.search(query, searchOptions);
         console.log(`📊 ${searchMode === 'unified' ? 'All mode' : searchMode + ' mode'}: Got ${results.length} results`);
       }
@@ -403,13 +314,6 @@ function App() {
     }
   };
 
-  const handleServiceConfigured = async () => {
-    setShowServiceConfig(false);
-    loadConnectedSources();
-    // Refresh available models in case new API keys were added
-    await loadAvailableModels();
-  };
-
   const handleQuickGitHubSetup = (token: string) => {
     const success = realAPIService.configureGitHubToken(token);
     if (success) {
@@ -436,12 +340,6 @@ function App() {
         return (
           <Integrations
             isVisible={currentView === 'integrations'}
-            onAddServer={() => setShowServiceConfig(true)}
-            mcpServers={mcpServers}
-            onMCPConnect={handleMCPConnect}
-            onMCPDisconnect={handleMCPDisconnect}
-            onMCPConfigure={handleMCPConfigure}
-            onMCPAddServer={handleMCPAddServer}
           />
         );
       default:
@@ -481,6 +379,9 @@ function App() {
               </div>
             )}
 
+
+
+
             {!isLoading && searchResults.length === 0 && !error && (
               <div className="text-center py-12">
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-8 max-w-2xl mx-auto">
@@ -510,7 +411,7 @@ function App() {
                       </p>
                     </div>
                   </div>
-                  {connectedSources.length === 0 && (
+                  {connectedServicesCount === 0 && (
                     <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                       <p className="text-yellow-800 text-sm mb-3">
                         <strong>Get Started:</strong> Configure your API credentials to enable search across your services.
@@ -564,6 +465,22 @@ function App() {
                   // TODO: Implement star toggle functionality
                   console.log('Star toggle for:', resultId);
                 }}
+                renderExtraContent={(result, idx) => {
+                  // Only show follow-up input at the end of the last AI response card
+                  if (
+                    currentView === 'search' &&
+                    selectedModel.startsWith('gemini') &&
+                    result.sourceType === 'ai' &&
+                    idx === searchResults.map(r => r.sourceType).lastIndexOf('ai')
+                  ) {
+                    return (
+                      <div className="mt-4">
+                        <ChatLikeFollowUpInput onFollowUp={handleSearch} selectedModel={selectedModel} />
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
               />
             )}
           </div>
@@ -576,8 +493,7 @@ function App() {
       <Header 
         currentView={currentView}
         onViewChange={(view) => setCurrentView(view as 'search' | 'analytics' | 'integrations')}
-        onConfigureServices={() => setShowServiceConfig(true)}
-        connectedServicesCount={connectedSources.length}
+        connectedServicesCount={connectedServicesCount}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -592,16 +508,6 @@ function App() {
       >
         🐛
       </button>
-
-      {showServiceConfig && (
-        <ServiceConfiguration
-          isOpen={showServiceConfig}
-          onClose={() => setShowServiceConfig(false)}
-          onSave={() => {
-            handleServiceConfigured();
-          }}
-        />
-      )}
 
       {showGitHubSetup && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -626,6 +532,48 @@ function App() {
         onClose={() => setShowDebugPanel(false)}
       />
     </div>
+  );
+}
+
+
+// Persistent chat-like follow-up input below AI card
+import React, { useState as useChatInputState } from 'react';
+function ChatLikeFollowUpInput({ onFollowUp, selectedModel }: { onFollowUp: (query: string, model: string, sources: string[], searchMode: 'ai') => Promise<void>, selectedModel: string }) {
+  const [value, setValue] = useChatInputState('');
+  const [sending, setSending] = useChatInputState(false);
+  return (
+    <form
+      className="flex gap-2 items-end bg-white border border-gray-200 rounded-xl shadow-sm p-4"
+      style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (value.trim()) {
+          setSending(true);
+          await onFollowUp(value, selectedModel, [], 'ai');
+          setValue('');
+          setSending(false);
+        }
+      }}
+    >
+      <input
+        name="followup"
+        type="text"
+        placeholder="Type your follow-up..."
+        className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+        autoComplete="off"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        disabled={sending}
+        autoFocus
+      />
+      <button
+        type="submit"
+        className="px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-base font-semibold"
+        disabled={sending || !value.trim()}
+      >
+        {sending ? 'Sending...' : 'Send'}
+      </button>
+    </form>
   );
 }
 

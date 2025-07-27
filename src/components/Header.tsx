@@ -1,17 +1,15 @@
 import React from 'react';
-import { Search, Bell, User, Zap, BarChart3, Grid3X3, Link } from 'lucide-react';
+import { Search, Bell, User, Zap, BarChart3, Grid3X3 } from 'lucide-react';
 
 interface HeaderProps {
   currentView: string;
   onViewChange: (view: string) => void;
-  onConfigureServices: () => void;
   connectedServicesCount: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
   currentView,
   onViewChange,
-  onConfigureServices,
   connectedServicesCount
 }) => {
   return (
@@ -82,15 +80,6 @@ export const Header: React.FC<HeaderProps> = ({
               }`} />
               <span>{connectedServicesCount} services</span>
             </div>
-
-            {/* Configure Services Button */}
-            <button
-              onClick={onConfigureServices}
-              className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Configure Services"
-            >
-              <Link className="w-5 h-5" />
-            </button>
 
             {/* Notifications */}
             <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors relative">

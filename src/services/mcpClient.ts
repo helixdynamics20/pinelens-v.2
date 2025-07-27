@@ -1,8 +1,7 @@
-import { searchProcessor, ProcessedSearchResult, SearchProcessingOptions } from './searchProcessor';
+import { searchProcessor, ProcessedSearchResult } from './searchProcessor';
 import { ServiceFactory, ServiceCredentials } from './integrations';
 import { webSearchService } from './webSearch';
 import { aiSearchService } from './aiSearch';
-import { realAPIService } from './realAPIService';
 import { githubMCPService, GitHubCredentials, GitHubSearchResult } from './githubMCPService';
 import { aiQueryProcessor, QueryIntent, MCPAction } from './aiQueryProcessor';
 
@@ -11,7 +10,7 @@ export interface SearchResult {
   title: string;
   content: string;
   source: string;
-  sourceType: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack';
+  sourceType: 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack' | 'web' | 'ai';
   author: string;
   date: string;
   url: string;
@@ -176,6 +175,7 @@ class MCPClient extends EventEmitter {
       this.connections.set(serverId, ws);
       server.status = 'connected';
       server.lastSync = new Date().toISOString();
+      this.servers.set(serverId, server); // Ensure updated status is stored
       this.emit('serverStatusChanged', server);
       this.initializeServerConnection(serverId);
     };
@@ -229,6 +229,7 @@ class MCPClient extends EventEmitter {
           this.httpConnections.set(serverId, server.config.serverUrl);
           server.status = 'connected';
           server.lastSync = new Date().toISOString();
+          this.servers.set(serverId, server); // Ensure updated status is stored
           this.emit('serverStatusChanged', server);
           
           // For GitHub, we don't need to sync like other MCP servers
@@ -255,13 +256,28 @@ class MCPClient extends EventEmitter {
         }
       } catch (error) {
         clearTimeout(timeoutId);
+        
+        // Handle network errors gracefully
+        if (error instanceof Error) {
+          if (error.name === 'AbortError') {
+            throw new Error(`Connection timeout: Unable to reach ${server.config.serverUrl}`);
+          } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            throw new Error(`Network error: Unable to connect to ${server.config.serverUrl}. Please check if the server is running and accessible.`);
+          }
+        }
         throw error;
       }
     } catch (error) {
       console.error(`HTTP connection error for ${serverId}:`, error);
       server.status = 'error';
       this.emit('serverStatusChanged', server);
-      throw error;
+      
+      // Provide user-friendly error message
+      let errorMessage = `Failed to connect to ${server.name}`;
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
     }
   }
 
@@ -348,8 +364,6 @@ class MCPClient extends EventEmitter {
   }
 
   async search(request: SearchRequest): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
-    
     // Handle different search modes
     switch (request.searchMode) {
       case 'web':
@@ -449,12 +463,33 @@ class MCPClient extends EventEmitter {
     try {
       console.log('🔍 Starting AI-powered MCP search (VS Code style)...');
       
+      // Debug: Print all servers and their statuses before filtering
+      const allServers = Array.from(this.servers.values());
+      console.log('🛠️ All MCP servers:', allServers.map(s => ({ id: s.id, name: s.name, status: s.status })));
       // Get connected MCP servers
-      const connectedServers = Array.from(this.servers.values()).filter(server => server.status === 'connected');
+      const connectedServers = allServers.filter(server => server.status === 'connected');
       console.log(`📱 Found ${connectedServers.length} connected MCP servers`);
       
       if (connectedServers.length === 0) {
-        throw new Error('No MCP servers connected. Please connect your GitHub, Jira, or other services in the MCP Connections section.');
+        console.warn('❌ No MCP servers connected, providing setup guidance');
+        
+        // Return helpful guidance instead of throwing an error
+        return [{
+          id: 'mcp-setup-guide',
+          title: 'Set up MCP Connections',
+          content: `To search your connected services, you need to configure MCP servers first. Go to the Integrations tab to connect services like GitHub, Jira, Slack, or Bitbucket. Once connected, you'll be able to search across all your tools from here.`,
+          source: 'PineLens Setup',
+          sourceType: 'ai',
+          author: 'System',
+          date: new Date().toISOString(),
+          url: '#integrations',
+          relevanceScore: 1.0,
+          starred: false,
+          metadata: {
+            type: 'setup_guide',
+            action: 'configure_mcp_servers'
+          }
+        }];
       }
 
       // Step 1: Use AI to process the natural language query
@@ -471,7 +506,24 @@ class MCPClient extends EventEmitter {
 
       if (queryIntent.actions.length === 0) {
         console.warn('❌ AI found no suitable actions for this query');
-        throw new Error(`I couldn't understand how to search for "${request.query}". Try rephrasing your query or check if you have the right services connected.`);
+        
+        // Return helpful suggestion instead of throwing an error
+        return [{
+          id: 'query-help',
+          title: 'Try a different search approach',
+          content: `I couldn't find a specific way to search for "${request.query}" in your connected services (${availableServers.join(', ')}). Try being more specific, like "find my GitHub repositories" or "show recent Jira tickets".`,
+          source: 'PineLens AI',
+          sourceType: 'ai',
+          author: 'Search Assistant',
+          date: new Date().toISOString(),
+          url: '',
+          relevanceScore: 0.8,
+          starred: false,
+          metadata: {
+            type: 'search_suggestion',
+            availableServices: availableServers
+          }
+        }];
       }
 
       // Step 2: Execute MCP actions based on AI recommendations
@@ -498,7 +550,24 @@ class MCPClient extends EventEmitter {
       }
 
       if (allResults.length === 0) {
-        throw new Error(`No results found for "${request.query}". The search completed successfully but returned no matching items from your connected services.`);
+        // Return helpful message instead of throwing an error
+        return [{
+          id: 'no-results',
+          title: 'No results found',
+          content: `The search for "${request.query}" completed successfully but didn't find any matching items in your connected services. This could mean the search terms don't match any content, or the services might need time to sync. Try different keywords or check your service connections.`,
+          source: 'PineLens Search',
+          sourceType: 'ai',
+          author: 'Search Engine',
+          date: new Date().toISOString(),
+          url: '#integrations',
+          relevanceScore: 0.6,
+          starred: false,
+          metadata: {
+            type: 'search_result',
+            searchQuery: request.query,
+            connectedServices: availableServers
+          }
+        }];
       }
 
       console.log(`📊 Total AI-powered MCP search results: ${allResults.length}`);
@@ -517,7 +586,25 @@ class MCPClient extends EventEmitter {
       
     } catch (error) {
       console.error('❌ AI-powered MCP search failed:', error);
-      throw error;
+      
+      // Return error information as a search result instead of throwing
+      return [{
+        id: 'search-error',
+        title: 'Search Error',
+        content: `There was an error performing the search: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again or check your service connections in the Integrations tab.`,
+        source: 'PineLens Error Handler',
+        sourceType: 'ai',
+        author: 'System',
+        date: new Date().toISOString(),
+        url: '#integrations',
+        relevanceScore: 0.5,
+        starred: false,
+        metadata: {
+          type: 'error',
+          originalQuery: request.query,
+          errorMessage: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }];
     }
   }
 
@@ -557,12 +644,13 @@ class MCPClient extends EventEmitter {
       githubMCPService.setCredentials(credentials);
 
       switch (action.action) {
-        case 'get_user_repos':
+        case 'get_user_repos': {
           console.log('📦 Fetching user repositories...');
           const userRepos = await githubMCPService.getUserRepositories(1, 30);
           return this.convertGitHubResults(userRepos, server);
+        }
 
-        case 'search_repositories':
+        case 'search_repositories': {
           console.log(`🔍 Searching repositories with: ${JSON.stringify(action.parameters)}`);
           let repoQuery = action.parameters.query as string || request.query;
           
@@ -581,8 +669,9 @@ class MCPClient extends EventEmitter {
             order: 'desc'
           });
           return this.convertGitHubResults(repoResults, server);
+        }
 
-        case 'search_issues':
+        case 'search_issues': {
           console.log(`🐛 Searching issues with: ${JSON.stringify(action.parameters)}`);
           let issueQuery = action.parameters.query as string || request.query;
           
@@ -601,28 +690,31 @@ class MCPClient extends EventEmitter {
             order: 'desc'
           });
           return this.convertGitHubResults(issueResults, server);
+        }
 
-        case 'search_code':
+        case 'search_code': {
           console.log(`� Searching code with: ${JSON.stringify(action.parameters)}`);
           const codeResults = await githubMCPService.search(request.query, {
             types: ['code'],
             limit: 10,
-            sort: 'indexed',
+            sort: 'best-match',
             order: 'desc'
           });
           return this.convertGitHubResults(codeResults, server);
+        }
 
-        case 'search_commits':
+        case 'search_commits': {
           console.log(`📝 Searching commits with: ${JSON.stringify(action.parameters)}`);
           const commitResults = await githubMCPService.search(request.query, {
             types: ['commits'],
             limit: 10,
-            sort: 'committer-date',
+            sort: 'best-match',
             order: 'desc'
           });
           return this.convertGitHubResults(commitResults, server);
+        }
 
-        default:
+        default: {
           console.warn(`Unknown GitHub action: ${action.action}`);
           // Fallback to general search
           const fallbackResults = await githubMCPService.search(request.query, {
@@ -631,6 +723,7 @@ class MCPClient extends EventEmitter {
             order: 'desc'
           });
           return this.convertGitHubResults(fallbackResults, server);
+        }
       }
     } catch (error) {
       console.error(`GitHub MCP action failed for ${server.name}:`, error);
