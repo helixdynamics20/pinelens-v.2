@@ -580,7 +580,6 @@ function AppContent() {
     const success = realAPIService.configureGitHubToken(token);
     if (success) {
       loadAvailableModels();
-      loadAvailableModels();
       setError(null);
       setShowGitHubSetup(false);
       
