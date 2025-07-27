@@ -121,11 +121,33 @@ export const Integrations: React.FC<IntegrationsProps> = ({
     setIsRefreshing(false);
   };
 
-  const handleServiceDisconnect = (serviceId: string) => {
-    // Remove the service configuration
-    localStorage.removeItem(`${serviceId}_token`);
-    localStorage.removeItem(`${serviceId}_config`);
-    refreshServiceStatuses();
+  const handleServiceDisconnect = async (serviceId: string) => {
+    try {
+      // Disconnect from MCP server if it exists
+      const servers = mcpClient.getServers();
+      const server = servers.find(s => s.id === serviceId || s.name.toLowerCase().includes(serviceId));
+      
+      if (server) {
+        await mcpClient.removeServer(server.id);
+        console.log(`✅ Disconnected MCP server: ${server.name}`);
+      }
+      
+      // Remove the service configuration from localStorage
+      localStorage.removeItem(`${serviceId}_token`);
+      localStorage.removeItem(`${serviceId}_config`);
+      
+      // Refresh the UI
+      refreshServiceStatuses();
+      
+      console.log(`✅ Service ${serviceId} disconnected and configuration removed`);
+    } catch (error) {
+      console.error(`❌ Failed to disconnect service ${serviceId}:`, error);
+      
+      // Still try to remove local config even if MCP disconnect fails
+      localStorage.removeItem(`${serviceId}_token`);
+      localStorage.removeItem(`${serviceId}_config`);
+      refreshServiceStatuses();
+    }
   };
 
   if (!isVisible) return null;
@@ -300,7 +322,7 @@ export const Integrations: React.FC<IntegrationsProps> = ({
               className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
             >
               <Trash2 className="w-3 h-3 inline mr-1" />
-              Remove
+              Disconnect
             </button>
           </div>
         );

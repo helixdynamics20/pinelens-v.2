@@ -42,7 +42,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   }, []);
   
   // Search mode and AI options
-  const [searchMode, setSearchMode] = useState<'unified' | 'web' | 'ai' | 'apps'>('apps');
+  const [searchMode, setSearchMode] = useState<'unified' | 'web' | 'ai' | 'apps'>('unified');
   const [aiOptions, setAiOptions] = useState({
     models: selectedModel ? [selectedModel] : [],
     temperature: 0.7
@@ -126,7 +126,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyPress={handleKeyPress}
-                  placeholder="Ask me anything... e.g. 'How to integrate Bitbucket with Jira?' or 'Explain React hooks'"
+                  placeholder="Ask me anything..."
                   className="w-full pl-10 pr-4 py-3 text-base bg-transparent border-0 focus:outline-none focus:ring-0 placeholder-gray-500"
                 />
               </div>
