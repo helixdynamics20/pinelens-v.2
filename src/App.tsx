@@ -12,7 +12,6 @@ import { unifiedSearchService, UnifiedSearchResult } from './services/unifiedSea
 import { realAPIService } from './services/realAPIService';
 import { geminiService } from './services/geminiService';
 import { mcpClient } from './services/mcpClient';
-import { githubCopilotService } from './services/githubCopilotService';
 import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
 
 interface SearchOptions {
