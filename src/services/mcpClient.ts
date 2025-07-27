@@ -1331,9 +1331,12 @@ class MCPClient extends EventEmitter {
   }
 
   removeServer(serverId: string): void {
+    const server = this.servers.get(serverId);
+    const serverName = server?.name || serverId;
+    
     this.disconnectServer(serverId);
     this.servers.delete(serverId);
-    this.emit('serverRemoved', serverId);
+    this.emit('serverRemoved', serverId, serverName);
   }
 }
 

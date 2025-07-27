@@ -12,6 +12,9 @@ import { unifiedSearchService, UnifiedSearchResult } from './services/unifiedSea
 import { realAPIService } from './services/realAPIService';
 import { geminiService } from './services/geminiService';
 import { mcpClient } from './services/mcpClient';
+import { freeModelsService } from './services/freeModelsService';
+import { githubCopilotService } from './services/githubCopilotService';
+import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
 
 interface SearchOptions {
   searchMode?: string;
@@ -26,7 +29,8 @@ interface SearchOptions {
   appSources?: string[];
 }
 
-function App() {
+function AppContent() {
+  const { addNotification } = useNotifications();
   const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
   const [isLoading, setIsLoading] = useState(false);
@@ -67,10 +71,13 @@ function App() {
         contextLength?: number;
       }[] = [];
 
+      let configuredCount = 0;
+
       // Get Gemini models
       if (geminiService.isConfigured()) {
         const geminiModels = geminiService.getAvailableModels();
         allModels.push(...geminiModels);
+        configuredCount++;
         console.log(`✅ Loaded ${geminiModels.length} Gemini models`);
       } else {
         console.log('ℹ️ Gemini API key not configured');
@@ -90,9 +97,62 @@ function App() {
         setSelectedModel(allModels[0].id);
       }
 
+      // Add notification about model availability
+      if (configuredCount > 0) {
+        addNotification({
+          type: 'success',
+          title: 'AI Models Loaded',
+          message: `Successfully loaded ${allModels.length} AI models. You can now use AI-powered search.`,
+          autoHide: true,
+          duration: 4000
+        });
+      } else {
+        addNotification({
+          type: 'info',
+          title: 'AI Models Available',
+          message: `Found ${allModels.length} AI models. Configure API keys to enable AI-powered search.`,
+          autoHide: true,
+          duration: 5000,
+          actions: [
+            {
+              label: 'Setup API Keys',
+              action: () => {
+                setShowAPIKeySetup(true);
+              },
+              variant: 'primary'
+            }
+          ]
+        });
+      }
+
       console.log(`✅ Total Gemini models loaded: ${allModels.length}`);
     } catch (error) {
       console.error('Failed to load Gemini models:', error);
+      
+      // Add error notification
+      addNotification({
+        type: 'error',
+        title: 'Failed to Load AI Models',
+        message: 'Unable to load AI models. Some features may not work properly.',
+        autoHide: false,
+        actions: [
+          {
+            label: 'Retry',
+            action: () => {
+              loadAvailableModels();
+            },
+            variant: 'primary'
+          },
+          {
+            label: 'Check API Keys',
+            action: () => {
+              setShowAPIKeySetup(true);
+            },
+            variant: 'secondary'
+          }
+        ]
+      });
+      
       // Fallback to basic Gemini models
       const fallbackModels = [
         {
@@ -105,7 +165,7 @@ function App() {
       setAvailableModels(fallbackModels);
       setSelectedModel('gemini-pro');
     }
-  }, [selectedModel]);
+  }, [selectedModel, addNotification]);
 
   // Update connected services count from MCP client
   const loadConnectedServicesCount = () => {
@@ -119,17 +179,149 @@ function App() {
     loadAvailableModels();
     loadConnectedServicesCount();
 
-    // Optionally, listen for server status changes to update count live
-    const handler = () => loadConnectedServicesCount();
-    mcpClient.on('serverStatusChanged', handler);
-    mcpClient.on('serverAdded', handler);
-    mcpClient.on('serverRemoved', handler);
-    return () => {
-      mcpClient.removeListener('serverStatusChanged', handler);
-      mcpClient.removeListener('serverAdded', handler);
-      mcpClient.removeListener('serverRemoved', handler);
+    // Welcome notification on first load
+    const hasSeenWelcome = localStorage.getItem('pinelens_seen_welcome');
+    if (!hasSeenWelcome) {
+      setTimeout(() => {
+        addNotification({
+          type: 'info',
+          title: '🎉 Welcome to PineLens!',
+          message: 'Your AI-powered unified search platform is ready. Connect services to start searching across all your tools.',
+          autoHide: false,
+          actions: [
+            {
+              label: 'Connect Services',
+              action: () => {
+                setCurrentView('integrations');
+                localStorage.setItem('pinelens_seen_welcome', 'true');
+              },
+              variant: 'primary'
+            },
+            {
+              label: 'Setup API Keys',
+              action: () => {
+                setShowAPIKeySetup(true);
+                localStorage.setItem('pinelens_seen_welcome', 'true');
+              },
+              variant: 'secondary'
+            }
+          ]
+        });
+      }, 1000); // Delay to let UI settle
+    }
+
+    // Enhanced event handlers with notifications
+    const handleServerStatusChange = (server: any) => {
+      loadConnectedServicesCount();
+      
+      // Add notifications based on status changes
+      if (server.status === 'connected') {
+        addNotification({
+          type: 'success',
+          title: '🎉 Service Connected Successfully',
+          message: `${server.name || server.id} is now connected and ready to use. You can now search across this service.`,
+          autoHide: false,
+          actions: [
+            {
+              label: 'Search Now',
+              action: () => {
+                setCurrentView('search');
+              },
+              variant: 'primary'
+            },
+            {
+              label: 'View Services',
+              action: () => {
+                setCurrentView('integrations');
+              },
+              variant: 'secondary'
+            }
+          ]
+        });
+      } else if (server.status === 'error') {
+        addNotification({
+          type: 'error',
+          title: 'Service Connection Failed',
+          message: `Failed to connect to ${server.name || server.id}. Please check your configuration.`,
+          autoHide: false,
+          actions: [
+            {
+              label: 'Retry Connection',
+              action: () => {
+                setCurrentView('integrations');
+              },
+              variant: 'primary'
+            },
+            {
+              label: 'Check Settings',
+              action: () => {
+                setShowAPIKeySetup(true);
+              },
+              variant: 'secondary'
+            }
+          ]
+        });
+      } else if (server.status === 'disconnected') {
+        addNotification({
+          type: 'warning',
+          title: 'Service Disconnected',
+          message: `${server.name || server.id} has been disconnected.`,
+          autoHide: true,
+          duration: 4000
+        });
+      } else if (server.status === 'connecting') {
+        addNotification({
+          type: 'info',
+          title: 'Connecting to Service',
+          message: `Connecting to ${server.name || server.id}...`,
+          autoHide: true,
+          duration: 2000
+        });
+      }
     };
-  }, [loadAvailableModels]);
+
+    const handleServerAdded = (server: any) => {
+      loadConnectedServicesCount();
+      addNotification({
+        type: 'info',
+        title: 'New Service Added',
+        message: `${server.name || server.id} has been added to your integrations.`,
+        autoHide: true,
+        duration: 4000,
+        actions: [
+          {
+            label: 'Connect Now',
+            action: () => {
+              setCurrentView('integrations');
+            },
+            variant: 'primary'
+          }
+        ]
+      });
+    };
+
+    const handleServerRemoved = (serverId: string, serverName?: string) => {
+      loadConnectedServicesCount();
+      addNotification({
+        type: 'info',
+        title: 'Service Removed',
+        message: `${serverName || serverId} has been removed from your integrations.`,
+        autoHide: true,
+        duration: 3000
+      });
+    };
+
+    // Listen for events
+    mcpClient.on('serverStatusChanged', handleServerStatusChange);
+    mcpClient.on('serverAdded', handleServerAdded);
+    mcpClient.on('serverRemoved', handleServerRemoved);
+    
+    return () => {
+      mcpClient.removeListener('serverStatusChanged', handleServerStatusChange);
+      mcpClient.removeListener('serverAdded', handleServerAdded);
+      mcpClient.removeListener('serverRemoved', handleServerRemoved);
+    };
+  }, [loadAvailableModels, addNotification]);
 
   const handleSearch = async (
     query: string,
@@ -138,7 +330,25 @@ function App() {
     searchMode: 'unified' | 'apps' | 'web' | 'ai' = 'unified',
     options?: SearchOptions
   ) => {
-    if (!query.trim()) return;
+    if (!query.trim()) {
+      addNotification({
+        type: 'warning',
+        title: 'Empty Search',
+        message: 'Please enter a search query to get started.',
+        autoHide: true,
+        duration: 3000
+      });
+      return;
+    }
+
+    // Show search start notification
+    addNotification({
+      type: 'info',
+      title: 'Search Started',
+      message: `Searching for "${query}"...`,
+      autoHide: true,
+      duration: 2000
+    });
 
     setIsLoading(true);
     setError(null);
@@ -297,10 +507,62 @@ function App() {
       }
 
       setSearchResults(results);
+      
+      // Add search completion notification
+      if (results.length > 0) {
+        addNotification({
+          type: 'success',
+          title: 'Search Completed',
+          message: `Found ${results.length} result${results.length !== 1 ? 's' : ''} for "${query}"`,
+          autoHide: true,
+          duration: 3000
+        });
+      } else {
+        addNotification({
+          type: 'info',
+          title: 'No Results Found',
+          message: `No results found for "${query}". Try different keywords or check your connected services.`,
+          autoHide: true,
+          duration: 4000,
+          actions: [
+            {
+              label: 'Check Integrations',
+              action: () => {
+                setCurrentView('integrations');
+              },
+              variant: 'primary'
+            }
+          ]
+        });
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Search failed';
       setError(errorMessage);
       console.error('Search error:', err);
+      
+      // Add comprehensive error notification
+      addNotification({
+        type: 'error',
+        title: 'Search Failed',
+        message: errorMessage,
+        autoHide: false,
+        actions: [
+          {
+            label: 'Retry Search',
+            action: () => {
+              handleSearch(query, model, sources, searchMode, options);
+            },
+            variant: 'primary'
+          },
+          {
+            label: 'Check Settings',
+            action: () => {
+              setShowAPIKeySetup(true);
+            },
+            variant: 'secondary'
+          }
+        ]
+      });
       
       // If it's a "no services configured" error, show GitHub setup
       if (errorMessage.includes('No services configured')) {
@@ -317,10 +579,44 @@ function App() {
   const handleQuickGitHubSetup = (token: string) => {
     const success = realAPIService.configureGitHubToken(token);
     if (success) {
-      loadConnectedSources();
+      loadAvailableModels();
       loadAvailableModels();
       setError(null);
       setShowGitHubSetup(false);
+      
+      // Add success notification
+      addNotification({
+        type: 'success',
+        title: '🎉 GitHub Token Configured',
+        message: 'GitHub token has been successfully configured. You can now search GitHub repositories and access AI models.',
+        autoHide: false,
+        actions: [
+          {
+            label: 'Try Search',
+            action: () => {
+              setCurrentView('search');
+            },
+            variant: 'primary'
+          }
+        ]
+      });
+    } else {
+      // Add error notification
+      addNotification({
+        type: 'error',
+        title: 'GitHub Configuration Failed',
+        message: 'Failed to configure GitHub token. Please check your token and try again.',
+        autoHide: false,
+        actions: [
+          {
+            label: 'Retry',
+            action: () => {
+              setShowGitHubSetup(true);
+            },
+            variant: 'primary'
+          }
+        ]
+      });
     }
   };
 
@@ -532,6 +828,15 @@ function App() {
         onClose={() => setShowDebugPanel(false)}
       />
     </div>
+  );
+}
+
+// Main App wrapper with NotificationProvider
+function App() {
+  return (
+    <NotificationProvider>
+      <AppContent />
+    </NotificationProvider>
   );
 }
 
