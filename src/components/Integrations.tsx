@@ -124,7 +124,6 @@ export const Integrations: React.FC<IntegrationsProps> = ({
   const handleServiceDisconnect = async (serviceId: string) => {
     try {
       // Disconnect from MCP server if it exists
-      const { mcpClient } = await import('../services/mcpClient');
       const servers = mcpClient.getServers();
       const server = servers.find(s => s.id === serviceId || s.name.toLowerCase().includes(serviceId));
       
