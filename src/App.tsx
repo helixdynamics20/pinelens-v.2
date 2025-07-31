@@ -11,6 +11,7 @@ import { DebugPanel } from './components/DebugPanel';
 import { unifiedSearchService, UnifiedSearchResult } from './services/unifiedSearchService';
 import { realAPIService } from './services/realAPIService';
 import { geminiService } from './services/geminiService';
+import { awsBedrockService } from './services/awsBedrockService';
 import { mcpClient } from './services/mcpClient';
 import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
 
@@ -30,7 +31,7 @@ interface SearchOptions {
 function AppContent() {
   const { addNotification } = useNotifications();
   const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState('anthropic.claude-3-haiku-20240307-v1:0');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<'search' | 'analytics' | 'integrations'>('search');
@@ -71,6 +72,41 @@ function AppContent() {
 
       let configuredCount = 0;
 
+      // Get AWS Bedrock models
+      if (awsBedrockService.isAvailable()) {
+        const bedrockModels = awsBedrockService.getAvailableModels().map(modelId => {
+          const modelInfo = awsBedrockService.getModelInfo(modelId);
+          return {
+            id: modelId,
+            name: modelId.split('.')[1]?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || modelId,
+            provider: modelInfo.provider,
+            tier: 'premium',
+            capabilities: modelInfo.capabilities,
+            summary: `${modelInfo.provider} model available in ap-south-1`,
+            contextLength: modelId.includes('claude') ? 200000 : 32000
+          };
+        });
+        allModels.push(...bedrockModels);
+        configuredCount++;
+        console.log(`✅ Loaded ${bedrockModels.length} AWS Bedrock models`);
+      } else {
+        console.log('ℹ️ AWS Bedrock not configured');
+        // Add placeholder models to show what's available
+        const bedrockModels = awsBedrockService.getAvailableModels().map(modelId => {
+          const modelInfo = awsBedrockService.getModelInfo(modelId);
+          return {
+            id: modelId,
+            name: `${modelId.split('.')[1]?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || modelId} (AWS Key Required)`,
+            provider: `${modelInfo.provider} (Not Configured)`,
+            tier: 'premium',
+            capabilities: modelInfo.capabilities,
+            summary: 'AWS credentials required',
+            contextLength: modelId.includes('claude') ? 200000 : 32000
+          };
+        });
+        allModels.push(...bedrockModels);
+      }
+
       // Get Gemini models
       if (geminiService.isConfigured()) {
         const geminiModels = geminiService.getAvailableModels();
@@ -90,9 +126,12 @@ function AppContent() {
 
       setAvailableModels(allModels);
       
-      // Set the first available model as default if current selection is not available
+      // Set AWS Bedrock Claude as default if available, otherwise first available model
       if (allModels.length > 0 && !allModels.find(m => m.id === selectedModel)) {
-        setSelectedModel(allModels[0].id);
+        const claudeModel = allModels.find(m => m.id.includes('claude-3-haiku'));
+        const awsModel = allModels.find(m => m.id.startsWith('anthropic.') || m.id.startsWith('amazon.'));
+        const defaultModel = claudeModel || awsModel || allModels[0];
+        setSelectedModel(defaultModel.id);
       }
 
       // Add notification about model availability
@@ -123,7 +162,9 @@ function AppContent() {
         });
       }
 
-      console.log(`✅ Total Gemini models loaded: ${allModels.length}`);
+      console.log(`✅ Total models loaded: ${allModels.length}`);
+      console.log('📋 Available models:', allModels.map(m => ({ id: m.id, name: m.name, provider: m.provider })));
+      console.log('🎯 Default selected model:', selectedModel);
     } catch (error) {
       console.error('Failed to load Gemini models:', error);
       
@@ -372,7 +413,35 @@ function AppContent() {
         try {
           let conversationPrompt = chatHistory.map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`).join('\n');
           conversationPrompt += `\nUser: ${query}`;
-          if (model.startsWith('gemini-') || model === 'gemini-pro' || model === 'gemini-1.5-pro' || model === 'gemini-1.5-flash') {
+          
+          if (model.startsWith('anthropic.claude') || model.startsWith('amazon.titan') || model.startsWith('meta.llama') || model.startsWith('mistral.')) {
+            // Use AWS Bedrock service for AI response
+            console.log(`🤖 Using AWS Bedrock model: ${model}`);
+            const aiResponse = await awsBedrockService.generateResponse(conversationPrompt, 'general', {
+              temperature: options?.aiOptions?.temperature || 0.7,
+              maxTokens: 2048
+            });
+            results = [{
+              id: `bedrock-${Date.now()}`,
+              title: `AWS Bedrock AI Response`,
+              content: aiResponse.content,
+              source: availableModels.find(m => m.id === model)?.name || model,
+              sourceType: 'ai' as const,
+              author: 'AWS Bedrock AI',
+              date: new Date().toISOString(),
+              url: '#',
+              relevanceScore: 0.95,
+              searchMode: 'ai' as const,
+              metadata: {
+                type: 'ai-response',
+                model: model,
+                provider: availableModels.find(m => m.id === model)?.provider || 'AWS Bedrock',
+                searchMode: 'ai',
+                usage: aiResponse.usage
+              }
+            }];
+            setChatHistory(prev => [...prev, { role: 'ai', content: aiResponse.content }]);
+          } else if (model.startsWith('gemini-') || model === 'gemini-pro' || model === 'gemini-1.5-pro' || model === 'gemini-1.5-flash') {
             // Use Gemini service for AI response
             console.log(`🤖 Using Gemini model: ${model}`);
             const aiResponse = await geminiService.generateResponse(model, conversationPrompt, {
@@ -403,9 +472,9 @@ function AppContent() {
             results = await unifiedSearchService.search(query, searchOptions);
           }
         } catch (aiError) {
-          console.warn('Gemini AI search failed, falling back to unified search:', aiError);
-          if (aiError instanceof Error && aiError.message.includes('API key')) {
-            setError(`Gemini API Error: ${aiError.message}`);
+          console.warn('AI search failed, falling back to unified search:', aiError);
+          if (aiError instanceof Error && (aiError.message.includes('API key') || aiError.message.includes('AWS'))) {
+            setError(`AI API Error: ${aiError.message}`);
             return;
           }
           results = await unifiedSearchService.search(query, searchOptions);
@@ -758,22 +827,6 @@ function AppContent() {
                   // TODO: Implement star toggle functionality
                   console.log('Star toggle for:', resultId);
                 }}
-                renderExtraContent={(result, idx) => {
-                  // Only show follow-up input at the end of the last AI response card
-                  if (
-                    currentView === 'search' &&
-                    selectedModel.startsWith('gemini') &&
-                    result.sourceType === 'ai' &&
-                    idx === searchResults.map(r => r.sourceType).lastIndexOf('ai')
-                  ) {
-                    return (
-                      <div className="mt-4">
-                        <ChatLikeFollowUpInput onFollowUp={handleSearch} selectedModel={selectedModel} />
-                      </div>
-                    );
-                  }
-                  return null;
-                }}
               />
             )}
           </div>
@@ -834,48 +887,6 @@ function App() {
     <NotificationProvider>
       <AppContent />
     </NotificationProvider>
-  );
-}
-
-
-// Persistent chat-like follow-up input below AI card
-import React, { useState as useChatInputState } from 'react';
-function ChatLikeFollowUpInput({ onFollowUp, selectedModel }: { onFollowUp: (query: string, model: string, sources: string[], searchMode: 'ai') => Promise<void>, selectedModel: string }) {
-  const [value, setValue] = useChatInputState('');
-  const [sending, setSending] = useChatInputState(false);
-  return (
-    <form
-      className="flex gap-2 items-end bg-white border border-gray-200 rounded-xl shadow-sm p-4"
-      style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (value.trim()) {
-          setSending(true);
-          await onFollowUp(value, selectedModel, [], 'ai');
-          setValue('');
-          setSending(false);
-        }
-      }}
-    >
-      <input
-        name="followup"
-        type="text"
-        placeholder="Type your follow-up..."
-        className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
-        autoComplete="off"
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        disabled={sending}
-        autoFocus
-      />
-      <button
-        type="submit"
-        className="px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-base font-semibold"
-        disabled={sending || !value.trim()}
-      >
-        {sending ? 'Sending...' : 'Send'}
-      </button>
-    </form>
   );
 }
 
