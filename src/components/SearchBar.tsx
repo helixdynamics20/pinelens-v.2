@@ -1,8 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, Filter, Clock, Bot, Globe, Smartphone, Layers } from 'lucide-react';
 
+interface SearchOptions {
+  webRestrictions?: {
+    safeSearch?: boolean;
+    complianceLevel?: string;
+  };
+  aiOptions?: {
+    models?: string[];
+    temperature?: number;
+  };
+  appSources?: string[];
+}
+
 interface SearchBarProps {
-  onSearch: (query: string, model: string, sources: string[], searchMode?: 'unified' | 'apps' | 'web' | 'ai', options?: any) => void;
+  onSearch: (query: string, model: string, sources: string[], searchMode?: 'unified' | 'apps' | 'web' | 'ai', options?: SearchOptions) => void;
   selectedModel: string;
   onModelChange: (model: string) => void;
   availableModels: { 
@@ -78,35 +90,56 @@ export const SearchBar: React.FC<SearchBarProps> = ({
       {showModelSelector && (
         <div className="fixed inset-0 z-[999999]" onClick={() => setShowModelSelector(false)}>
           <div 
-            className="absolute bg-white border border-gray-200 rounded-lg shadow-2xl w-64 max-h-64 overflow-y-auto"
+            className="absolute bg-white border border-gray-200 rounded-lg shadow-2xl w-80 max-h-96 overflow-y-auto"
             style={{
-              top: modelSelectorRef.current ? 
-                modelSelectorRef.current.getBoundingClientRect().bottom + window.scrollY + 8 : '50%',
-              right: modelSelectorRef.current ? 
-                window.innerWidth - modelSelectorRef.current.getBoundingClientRect().right : '50%'
+              top: '120px',
+              right: '20px'
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-2">
-              <div className="text-xs font-semibold text-gray-500 mb-2 px-2">Available Models</div>
+            <div className="p-3">
+              <div className="text-xs font-semibold text-gray-500 mb-3 px-2 border-b pb-2">
+                Select AI Model ({availableModels.length} available)
+              </div>
               {availableModels.length === 0 ? (
-                <div className="px-2 py-2 text-xs text-gray-500">⏳ Loading models...</div>
+                <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                  <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                  Loading models...
+                </div>
               ) : (
-                availableModels.map(model => (
-                  <button
-                    key={model.id}
-                    onClick={() => {
-                      onModelChange(model.id);
-                      setShowModelSelector(false);
-                    }}
-                    className={`w-full text-left px-3 py-3 text-sm rounded hover:bg-gray-50 transition-colors ${
-                      selectedModel === model.id ? 'bg-blue-50 text-blue-700 font-bold' : 'text-gray-700'
-                    }`}
-                  >
-                    <div className="font-semibold text-base">{model.name}</div>
-                    <div className="text-gray-500 text-xs mt-1">{model.provider}</div>
-                  </button>
-                ))
+                <div className="space-y-1">
+                  {availableModels.map(model => (
+                    <button
+                      key={model.id}
+                      onClick={() => {
+                        onModelChange(model.id);
+                        setShowModelSelector(false);
+                      }}
+                      className={`w-full text-left px-3 py-3 text-sm rounded-lg hover:bg-gray-50 transition-colors border ${
+                        selectedModel === model.id 
+                          ? 'bg-blue-50 text-blue-700 border-blue-200 font-medium' 
+                          : 'text-gray-700 border-transparent hover:border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="font-semibold text-sm">{model.name}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {model.provider} {model.tier && `• ${model.tier}`}
+                          </div>
+                          {model.summary && (
+                            <div className="text-xs text-gray-400 mt-1 line-clamp-2">
+                              {model.summary}
+                            </div>
+                          )}
+                        </div>
+                        {selectedModel === model.id && (
+                          <div className="text-blue-500 ml-2">✓</div>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -135,15 +168,33 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               <div className="relative" ref={modelSelectorRef}>
                 <button
                   onClick={() => setShowModelSelector(!showModelSelector)}
-                  className="p-2 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-600 transition-colors flex items-center space-x-1"
+                  className={`px-3 py-2 rounded-lg transition-colors flex items-center space-x-2 min-w-[120px] ${
+                    showModelSelector 
+                      ? 'bg-blue-100 text-blue-700 border border-blue-200' 
+                      : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200'
+                  }`}
                   title={selectedModel ? `Current model: ${availableModels.find(m => m.id === selectedModel)?.name || selectedModel}` : 'Select AI model'}
                 >
-                  <Bot className="w-4 h-4" />
-                  {selectedModel && (
-                    <span className="text-xs font-medium">
-                      {availableModels.find(m => m.id === selectedModel)?.name?.split(' ')[0] || 'Model'}
-                    </span>
-                  )}
+                  <Bot className="w-4 h-4 flex-shrink-0" />
+                  <div className="flex-1 text-left">
+                    {selectedModel && availableModels.length > 0 ? (
+                      <div>
+                        <div className="text-xs font-medium truncate">
+                          {availableModels.find(m => m.id === selectedModel)?.name?.split(' ').slice(0, 2).join(' ') || 'Model'}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {availableModels.find(m => m.id === selectedModel)?.provider || ''}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs">Select Model</div>
+                    )}
+                  </div>
+                  <div className={`transform transition-transform ${showModelSelector ? 'rotate-180' : ''}`}>
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
                 </button>
               </div>
 
