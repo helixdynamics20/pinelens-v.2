@@ -286,10 +286,7 @@ Remember to:
       }
 
       // Clean the JSON string
-      jsonStr = jsonStr.split('').filter(char => {
-        const code = char.charCodeAt(0);
-        return code >= 32 && code <= 126 || code >= 160 || char === '\n' || char === '\r' || char === '\t';
-      }).join('').trim();
+      jsonStr = jsonStr.replace(/[^\x20-\x7E\xA0\n\r\t]/g, '').trim();
 
       return JSON.parse(jsonStr);
     } catch (error) {
