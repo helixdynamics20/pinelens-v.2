@@ -461,11 +461,7 @@ Format as JSON:
       }
       
       // Clean up common issues in AI-generated JSON
-      // Remove control characters using a different approach
-      jsonStr = jsonStr.split('').filter(char => {
-        const code = char.charCodeAt(0);
-        return code >= 32 && code <= 126 || code >= 160; // Keep printable characters
-      }).join('')
+      jsonStr = filterPrintableCharacters(jsonStr)
         .replace(/\n/g, '\\n') // Escape newlines
         .replace(/\r/g, '\\r') // Escape carriage returns
         .replace(/\t/g, '\\t') // Escape tabs
