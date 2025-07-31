@@ -21,7 +21,7 @@ export interface BedrockResponse {
 }
 
 class AWSBedrockService {
-  private client!: BedrockRuntimeClient; // Definite assignment assertion
+  private client: BedrockRuntimeClient | null = null; // Explicitly initialize to null
   private isConfigured = false;
 
   constructor() {
