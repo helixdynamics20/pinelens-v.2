@@ -16,9 +16,9 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { MCPServerSetup } from './MCPServerSetup';
-
 import { ServiceConfiguration } from './ServiceConfiguration';
 import { getMCPServiceStatuses } from '../services/mcpIntegrationStatus';
+import { useNotifications } from '../contexts/NotificationContext';
 
 interface IntegrationsProps {
   isVisible: boolean;
@@ -48,6 +48,7 @@ interface Integration {
 export const Integrations: React.FC<IntegrationsProps> = ({ 
   isVisible
 }) => {
+  const { addNotification } = useNotifications();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showMCPSetup, setShowMCPSetup] = useState(false);
@@ -60,7 +61,7 @@ export const Integrations: React.FC<IntegrationsProps> = ({
 
   // Check real service status (merge MCP client state with localStorage for config)
   const checkServiceStatus = (serviceId: string): RealServiceStatus => {
-    const mcpStatuses = getMCPServiceStatuses();
+    const mcpStatuses: Record<string, any> = getMCPServiceStatuses();
     const mcp = mcpStatuses[serviceId];
     // Local config presence
     let isConfigured = false;
@@ -124,8 +125,9 @@ export const Integrations: React.FC<IntegrationsProps> = ({
   const handleServiceDisconnect = async (serviceId: string) => {
     try {
       // Disconnect from MCP server if it exists
+      const { mcpClient } = await import('../services/mcpClient');
       const servers = mcpClient.getServers();
-      const server = servers.find(s => s.id === serviceId || s.name.toLowerCase().includes(serviceId));
+      const server = servers.find((s: any) => s.id === serviceId || s.name.toLowerCase().includes(serviceId));
       
       if (server) {
         await mcpClient.removeServer(server.id);
@@ -182,11 +184,29 @@ export const Integrations: React.FC<IntegrationsProps> = ({
       name: 'Jira',
       type: 'Project Management',
       category: 'project-management',
-      description: 'Search issues, epics, and project data from Jira',
-      features: ['Issue search', 'Project tracking', 'Sprint management', 'Custom fields'],
+      description: 'Search issues, epics, and project data from Jira using API token authentication',
+      features: ['Issue search', 'Project tracking', 'JQL queries', 'Advanced filtering', 'Custom fields support'],
       icon: <FileText className="w-6 h-6" />,
       color: 'bg-blue-100 text-blue-700',
-      setupInstructions: 'Generate an API token from Atlassian Account Settings → Security → API tokens',
+      setupInstructions: `🔑 **API Token Setup:**
+1. Go to https://id.atlassian.com/manage/api-tokens
+2. Click "Create API token"
+3. Give it a label (e.g., "PineLens Integration")
+4. Copy the generated token
+
+🌐 **Server URL:**
+Use your Atlassian base URL: https://YOUR-DOMAIN.atlassian.net
+(Replace YOUR-DOMAIN with your actual domain)
+
+📧 **Email:** Use your Atlassian account email
+
+⚠️ **CORS Notice:** Browser security may require a CORS proxy. The system will automatically handle this using localhost:3001 proxy.
+
+🔍 **Supported Features:**
+• Natural language search ("find bugs assigned to me")
+• JQL queries (project = "DEMO" AND status = "In Progress")  
+• Issue details, comments, and attachments
+• Project and user information`,
       isRealService: true
     },
     {
@@ -194,11 +214,11 @@ export const Integrations: React.FC<IntegrationsProps> = ({
       name: 'Confluence',
       type: 'Documentation',
       category: 'documentation',
-      description: 'Search through wiki pages, documentation, and knowledge base',
-      features: ['Page search', 'Space management', 'Content versioning', 'Attachments'],
+      description: 'Search through wiki pages, documentation, and knowledge base using Atlassian Remote MCP Server',
+      features: ['Page search', 'Space management', 'Content versioning', 'OAuth authentication'],
       icon: <Database className="w-6 h-6" />,
       color: 'bg-indigo-100 text-indigo-700',
-      setupInstructions: 'Use the same API token as Jira for Confluence access',
+      setupInstructions: 'Uses Atlassian Remote MCP Server with OAuth 2.0. Same setup as Jira - run: npx -y mcp-remote https://mcp.atlassian.com/v1/sse',
       isRealService: true
     },
     {
@@ -668,16 +688,42 @@ export const Integrations: React.FC<IntegrationsProps> = ({
 
               // Also add the server to mcpClient and connect it
               try {
+                console.log('🔌 Adding server to MCP client...');
                 const { mcpClient } = await import('../services/mcpClient');
                 const serverId = await mcpClient.addServer({
                   name: selectedService.name,
                   type: config.type,
                   serverConfig: config.serverConfig
                 });
+                
+                console.log('🔗 Connecting to MCP server...');
                 await mcpClient.connectServer(serverId);
                 console.log('✅ MCP server added and connected:', serverId);
+                
+                // Show success notification
+                if (addNotification) {
+                  addNotification({
+                    type: 'success',
+                    title: 'Connection Successful',
+                    message: `Successfully connected to ${selectedService.name}`
+                  });
+                }
               } catch (err) {
                 console.error('❌ Failed to add/connect MCP server:', err);
+                
+                // Show error notification with helpful message
+                const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+                if (addNotification) {
+                  addNotification({
+                    type: 'error',
+                    title: 'Connection Failed',
+                    message: `Failed to connect to ${selectedService.name}: ${errorMessage}`
+                  });
+                }
+                
+                // Don't throw here - we've already saved the config to localStorage
+                // Just log the error and let the user try again
+                console.warn('Config saved to localStorage but MCP connection failed. User can retry connection.');
               }
 
               // Close modal and refresh

@@ -5,6 +5,7 @@ import { SearchBar } from './components/SearchBar';
 import { SearchResults } from './components/SearchResults';
 import { EnhancedAnalytics } from './components/EnhancedAnalytics';
 import { Integrations } from './components/Integrations';
+import InHouseIntegrations from './components/InHouseIntegrations';
 import { GitHubTokenSetup } from './components/GitHubTokenSetup';
 import { APIKeySetup } from './components/APIKeySetup';
 import { DebugPanel } from './components/DebugPanel';
@@ -14,6 +15,7 @@ import { geminiService } from './services/geminiService';
 import { awsBedrockService } from './services/awsBedrockService';
 import { mcpClient } from './services/mcpClient';
 import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
+import { enhancedInHouseMCPService } from './services/enhancedInHouseMCPService';
 
 interface SearchOptions {
   searchMode?: string;
@@ -28,13 +30,21 @@ interface SearchOptions {
   appSources?: string[];
 }
 
+// Define a minimal interface for the server object to satisfy TypeScript
+interface Server {
+  id: string;
+  status: string;
+  name?: string;
+  // other properties may exist but are not needed for this component
+}
+
 function AppContent() {
   const { addNotification } = useNotifications();
   const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
   const [selectedModel, setSelectedModel] = useState('anthropic.claude-3-haiku-20240307-v1:0');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentView, setCurrentView] = useState<'search' | 'analytics' | 'integrations'>('search');
+  const [currentView, setCurrentView] = useState<'search' | 'analytics' | 'integrations' | 'inhouse-integrations'>('search');
   const [showGitHubSetup, setShowGitHubSetup] = useState(false);
   const [showAPIKeySetup, setShowAPIKeySetup] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
@@ -206,12 +216,29 @@ function AppContent() {
     }
   }, [selectedModel, addNotification]);
 
-  // Update connected services count from MCP client
-  const loadConnectedServicesCount = () => {
+  // Update connected services count from MCP client + In-House services
+  const loadConnectedServicesCount = useCallback(() => {
     const servers = mcpClient.getServers();
-    const connected = servers.filter(s => s.status === 'connected');
-    setConnectedServicesCount(connected.length);
-  };
+    const mcpConnected = servers.filter(s => s.status === 'connected').length;
+    
+    // Check in-house services using the service for an accurate status
+    let inHouseConnected = 0;
+    if (enhancedInHouseMCPService.isJiraConfigured()) {
+      inHouseConnected++;
+    }
+    if (enhancedInHouseMCPService.isBitbucketConfigured()) {
+      inHouseConnected++;
+    }
+    
+    const totalConnected = mcpConnected + inHouseConnected;
+    setConnectedServicesCount(totalConnected);
+    
+    console.log('📊 Connected Services Count Updated:', {
+      mcpServices: mcpConnected,
+      inHouseServices: inHouseConnected,
+      total: totalConnected
+    });
+  }, []);
 
   useEffect(() => {
     // loadConnectedSources(); // No longer needed
@@ -250,7 +277,7 @@ function AppContent() {
     }
 
     // Enhanced event handlers with notifications
-    const handleServerStatusChange = (server: any) => {
+    const handleServerStatusChange = (server: Server) => {
       loadConnectedServicesCount();
       
       // Add notifications based on status changes
@@ -319,7 +346,7 @@ function AppContent() {
       }
     };
 
-    const handleServerAdded = (server: any) => {
+    const handleServerAdded = (server: Server) => {
       loadConnectedServicesCount();
       addNotification({
         type: 'info',
@@ -360,7 +387,7 @@ function AppContent() {
       mcpClient.removeListener('serverAdded', handleServerAdded);
       mcpClient.removeListener('serverRemoved', handleServerRemoved);
     };
-  }, [loadAvailableModels, addNotification]);
+  }, [loadAvailableModels, addNotification, loadConnectedServicesCount]);
 
   const handleSearch = async (
     query: string,
@@ -417,7 +444,28 @@ function AppContent() {
           if (model.startsWith('anthropic.claude') || model.startsWith('amazon.titan') || model.startsWith('meta.llama') || model.startsWith('mistral.')) {
             // Use AWS Bedrock service for AI response
             console.log(`🤖 Using AWS Bedrock model: ${model}`);
-            const aiResponse = await awsBedrockService.generateResponse(conversationPrompt, 'general', {
+            
+            // Detect query type based on content
+            const queryType = (() => {
+              const lowerQuery = query.toLowerCase();
+              if (lowerQuery.includes('code') || lowerQuery.includes('function') || lowerQuery.includes('algorithm') || 
+                  lowerQuery.includes('implement') || lowerQuery.includes('script') || lowerQuery.includes('programming') ||
+                  lowerQuery.includes('sieve') || lowerQuery.includes('prime') || lowerQuery.includes('javascript') ||
+                  lowerQuery.includes('python') || lowerQuery.includes('java') || lowerQuery.includes('typescript')) {
+                return 'code';
+              } else if (lowerQuery.includes('analyze') || lowerQuery.includes('analysis') || lowerQuery.includes('compare') ||
+                        lowerQuery.includes('summarize') || lowerQuery.includes('explain') || lowerQuery.includes('review')) {
+                return 'analysis';
+              } else if (lowerQuery.includes('json') || lowerQuery.includes('table') || lowerQuery.includes('format') ||
+                        lowerQuery.includes('structure') || lowerQuery.includes('organize')) {
+                return 'structured';
+              }
+              return 'general';
+            })();
+            
+            console.log(`🎯 Detected query type: ${queryType} for query: "${query}"`);
+            
+            const aiResponse = await awsBedrockService.generateResponse(conversationPrompt, queryType, {
               temperature: options?.aiOptions?.temperature || 0.7,
               maxTokens: 2048
             });
@@ -480,81 +528,9 @@ function AppContent() {
           results = await unifiedSearchService.search(query, searchOptions);
         }
       } else if (searchMode === 'apps') {
-        // Debug: Print all MCP servers before search
-        console.log('DEBUG: MCP servers before app search:', mcpClient.getServers());
-        try {
-          const mcpResults = await mcpClient.search({
-            query,
-            sources: [],
-            model,
-            searchMode: 'apps'
-          });
-          results = mcpResults.map(result => ({
-            id: result.id,
-            title: result.title,
-            content: result.content,
-            source: result.source,
-            sourceType: result.sourceType as 'bitbucket' | 'jira' | 'teams' | 'confluence' | 'github' | 'slack' | 'web' | 'ai',
-            author: result.author,
-            date: result.date,
-            url: result.url,
-            relevanceScore: result.relevanceScore,
-            searchMode: 'apps' as const,
-            starred: result.starred,
-            metadata: {
-              type: String(result.metadata?.type || 'general'),
-              ...result.metadata,
-              aiProcessed: true
-            },
-            accessLevel: 'private' as const
-          }));
-          console.log(`📊 AI-powered MCP search returned ${results.length} results`);
-          if (results.length > 0 && (model.startsWith('gemini-') || model === 'gemini-pro' || model === 'gemini-1.5-pro' || model === 'gemini-1.5-flash')) {
-            try {
-              const { aiQueryProcessor } = await import('./services/aiQueryProcessor');
-              const aiFormattedContent = await aiQueryProcessor.formatResults(
-                {
-                  originalQuery: query,
-                  processedQuery: query,
-                  intent: `Search for ${query}`,
-                  actions: [],
-                  confidence: 0.8
-                },
-                mcpResults,
-                model
-              );
-              results.unshift({
-                id: `ai-summary-${Date.now()}`,
-                title: `📋 Search Summary for "${query}"`,
-                content: aiFormattedContent,
-                source: availableModels.find(m => m.id === model)?.name || model,
-                sourceType: 'ai' as const,
-                author: 'AI Assistant',
-                date: new Date().toISOString(),
-                url: '#',
-                relevanceScore: 1.0,
-                searchMode: 'apps' as const,
-                starred: false,
-                metadata: {
-                  type: 'ai-summary',
-                  model: model,
-                  provider: 'Google AI',
-                  searchMode: 'apps',
-                  aiProcessed: true,
-                  isAISummary: true
-                },
-                accessLevel: 'private' as const
-              });
-              console.log('✨ Enhanced results with AI-powered summary');
-            } catch (aiError) {
-              console.warn('Failed to enhance results with AI formatting:', aiError);
-            }
-          }
-        } catch (mcpError) {
-          console.error('AI-powered MCP search failed:', mcpError);
-          setError(`App search failed: ${mcpError instanceof Error ? mcpError.message : 'Unknown error'}`);
-          return;
-        }
+        // Use the unified search service for 'apps' mode
+        results = await unifiedSearchService.search(query, { ...searchOptions, searchMode: 'apps' });
+        console.log(`📊 Apps search returned ${results.length} results`);
       } else {
         results = await unifiedSearchService.search(query, searchOptions);
         console.log(`📊 ${searchMode === 'unified' ? 'All mode' : searchMode + ' mode'}: Got ${results.length} results`);
@@ -690,6 +666,12 @@ function AppContent() {
     setShowGitHubSetup(false);
   };
 
+  const handleInHouseConnectionChange = () => {
+    // This function will be called from InHouseIntegrations when a connection status changes.
+    // It will trigger a re-calculation of the connected services count.
+    loadConnectedServicesCount();
+  };
+
   const renderMainContent = () => {
     switch (currentView) {
       case 'analytics':
@@ -703,6 +685,10 @@ function AppContent() {
           <Integrations
             isVisible={currentView === 'integrations'}
           />
+        );
+      case 'inhouse-integrations':
+        return (
+          <InHouseIntegrations onConnectionChange={handleInHouseConnectionChange} />
         );
       default:
         return (
@@ -838,7 +824,7 @@ function AppContent() {
     <div className="min-h-screen bg-gray-50">
       <Header 
         currentView={currentView}
-        onViewChange={(view) => setCurrentView(view as 'search' | 'analytics' | 'integrations')}
+        onViewChange={(view) => setCurrentView(view as 'search' | 'analytics' | 'integrations' | 'inhouse-integrations')}
         connectedServicesCount={connectedServicesCount}
       />
 

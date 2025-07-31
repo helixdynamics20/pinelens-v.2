@@ -20,6 +20,15 @@ import {
 } from 'lucide-react';
 import { UnifiedSearchResult } from '../services/unifiedSearchService';
 
+interface PullRequestDetail {
+  id: string;
+  title: string;
+  status: string;
+  url: string;
+  author: string;
+  created: string;
+}
+
 interface SearchResultsProps {
   results: UnifiedSearchResult[];
   isLoading: boolean;
@@ -481,6 +490,244 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
                               +{result.metadata.labels.length - 5} more
                             </span>
                           )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Enhanced JIRA-specific metadata */}
+                  {result.sourceType === 'jira' && result.metadata && (
+                    <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200">
+                      {/* Primary Information Row */}
+                      <div className="flex flex-wrap gap-3 text-sm mb-4">
+                        {result.metadata.status && (
+                          <div className={`flex items-center space-x-2 px-3 py-2 rounded-lg shadow-sm font-semibold ${
+                            result.metadata.status.toLowerCase().includes('done') || result.metadata.status.toLowerCase().includes('closed') || result.metadata.status.toLowerCase().includes('resolved')
+                              ? 'bg-green-500 text-white'
+                              : result.metadata.status.toLowerCase().includes('progress') || result.metadata.status.toLowerCase().includes('review')
+                              ? 'bg-yellow-500 text-white'
+                              : result.metadata.status.toLowerCase().includes('to do') || result.metadata.status.toLowerCase().includes('open') || result.metadata.status.toLowerCase().includes('created')
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-gray-500 text-white'
+                          }`}>
+                            <div className="w-2 h-2 rounded-full bg-white opacity-80"></div>
+                            <span>{result.metadata.status}</span>
+                          </div>
+                        )}
+                        
+                        {result.metadata.priority && (
+                          <div className={`flex items-center space-x-2 px-3 py-2 rounded-lg shadow-sm font-semibold ${
+                            result.metadata.priority.toLowerCase().includes('highest') || result.metadata.priority.toLowerCase().includes('critical')
+                              ? 'bg-red-600 text-white'
+                              : result.metadata.priority.toLowerCase().includes('high')
+                              ? 'bg-red-500 text-white'
+                              : result.metadata.priority.toLowerCase().includes('medium')
+                              ? 'bg-orange-500 text-white'
+                              : result.metadata.priority.toLowerCase().includes('low')
+                              ? 'bg-green-500 text-white'
+                              : 'bg-gray-500 text-white'
+                          }`}>
+                            <AlertCircle className="w-4 h-4" />
+                            <span>{result.metadata.priority}</span>
+                          </div>
+                        )}
+
+                        {result.metadata.issueType && (
+                          <div className="flex items-center space-x-2 bg-purple-500 text-white px-3 py-2 rounded-lg font-semibold shadow-sm">
+                            <FileText className="w-4 h-4" />
+                            <span>{result.metadata.issueType}</span>
+                          </div>
+                        )}
+
+                        {result.metadata.projectKey && (
+                          <div className="flex items-center space-x-2 bg-indigo-500 text-white px-3 py-2 rounded-lg font-semibold shadow-sm">
+                            <Tag className="w-4 h-4" />
+                            <span>{result.metadata.projectKey}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* People & Timing Row */}
+                      <div className="flex flex-wrap gap-3 text-sm mb-4">
+                        {result.metadata.assignee && (
+                          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg shadow-sm border border-blue-200">
+                            <User className="w-4 h-4 text-blue-600" />
+                            <span className="font-medium text-gray-800">Assigned to:</span>
+                            <span className="font-semibold text-blue-600">{result.metadata.assignee}</span>
+                          </div>
+                        )}
+
+                        {result.metadata.reporter && (
+                          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg shadow-sm border border-blue-200">
+                            <User className="w-4 h-4 text-gray-600" />
+                            <span className="font-medium text-gray-600">Reporter:</span>
+                            <span className="font-semibold text-gray-800">{result.metadata.reporter}</span>
+                          </div>
+                        )}
+
+                        {result.metadata.created && (
+                          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg shadow-sm border border-blue-200">
+                            <Calendar className="w-4 h-4 text-green-600" />
+                            <span className="font-medium text-gray-600">Created:</span>
+                            <span className="font-semibold text-gray-800">
+                              {new Date(result.metadata.created).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </span>
+                          </div>
+                        )}
+
+                        {result.metadata.updated && (
+                          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg shadow-sm border border-blue-200">
+                            <Clock className="w-4 h-4 text-orange-600" />
+                            <span className="font-medium text-gray-600">Updated:</span>
+                            <span className="font-semibold text-gray-800">
+                              {new Date(result.metadata.updated).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Development & Pull Requests */}
+                      {result.metadata.pullRequests && (
+                        <div className="mb-4 p-3 bg-white rounded-lg shadow-sm border border-green-200">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <GitBranch className="w-4 h-4 text-green-600" />
+                            <span className="font-semibold text-gray-800">Pull Requests</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                              Total: {result.metadata.pullRequests.total}
+                            </span>
+                            {result.metadata.pullRequests.open > 0 && (
+                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+                                Open: {result.metadata.pullRequests.open}
+                              </span>
+                            )}
+                            {result.metadata.pullRequests.merged > 0 && (
+                              <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">
+                                Merged: {result.metadata.pullRequests.merged}
+                              </span>
+                            )}
+                            {result.metadata.pullRequests.declined > 0 && (
+                              <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">
+                                Declined: {result.metadata.pullRequests.declined}
+                              </span>
+                            )}
+                          </div>
+                          {result.metadata.pullRequests.details && result.metadata.pullRequests.details.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {result.metadata.pullRequests.details.slice(0, 3).map((pr: PullRequestDetail, idx: number) => (
+                                <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded text-xs">
+                                  <div className="flex items-center space-x-2">
+                                    <span className={`w-2 h-2 rounded-full ${
+                                      pr.status === 'OPEN' ? 'bg-green-500' : 
+                                      pr.status === 'MERGED' ? 'bg-purple-500' : 'bg-red-500'
+                                    }`}></span>
+                                    <span className="font-medium truncate max-w-xs">{pr.title}</span>
+                                  </div>
+                                  <a 
+                                    href={pr.url} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Additional Information */}
+                      <div className="flex flex-wrap gap-2">
+                        {result.metadata.storyPoints && (
+                          <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">
+                            {result.metadata.storyPoints} SP
+                          </span>
+                        )}
+                        
+                        {result.metadata.resolution && (
+                          <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+                            {result.metadata.resolution}
+                          </span>
+                        )}
+
+                        {result.metadata.labels && result.metadata.labels.length > 0 && (
+                          <>
+                            {result.metadata.labels.slice(0, 4).map((label: string, idx: number) => (
+                              <span key={idx} className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium">
+                                {label}
+                              </span>
+                            ))}
+                            {result.metadata.labels.length > 4 && (
+                              <span className="px-2 py-1 bg-gray-200 text-gray-600 rounded-full text-xs">
+                                +{result.metadata.labels.length - 4} more
+                              </span>
+                            )}
+                          </>
+                        )}
+
+                        {result.metadata.components && result.metadata.components.length > 0 && (
+                          <>
+                            {result.metadata.components.slice(0, 3).map((component: string, idx: number) => (
+                              <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                                {component}
+                              </span>
+                            ))}
+                            {result.metadata.components.length > 3 && (
+                              <span className="px-2 py-1 bg-blue-200 text-blue-600 rounded-full text-xs">
+                                +{result.metadata.components.length - 3} more
+                              </span>
+                            )}
+                          </>
+                        )}
+
+                        {result.metadata.customFields?.watchCount && (
+                          <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded-full text-xs font-medium">
+                            👁️ {result.metadata.customFields.watchCount} watchers
+                          </span>
+                        )}
+
+                        {result.metadata.customFields?.commentCount && (
+                          <span className="px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs font-medium">
+                            💬 {result.metadata.customFields.commentCount} comments
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Time Tracking */}
+                      {result.metadata.timeTracking && (
+                        <div className="mt-3 p-2 bg-indigo-50 rounded-lg border border-indigo-200">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <Clock className="w-4 h-4 text-indigo-600" />
+                            <span className="font-semibold text-indigo-800 text-sm">Time Tracking</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            {result.metadata.timeTracking.originalEstimate && (
+                              <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded">
+                                Est: {result.metadata.timeTracking.originalEstimate}
+                              </span>
+                            )}
+                            {result.metadata.timeTracking.timeSpent && (
+                              <span className="px-2 py-1 bg-green-100 text-green-700 rounded">
+                                Spent: {result.metadata.timeTracking.timeSpent}
+                              </span>
+                            )}
+                            {result.metadata.timeTracking.remainingEstimate && (
+                              <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded">
+                                Remaining: {result.metadata.timeTracking.remainingEstimate}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

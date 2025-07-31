@@ -20,6 +20,10 @@ export default defineConfig(({ mode }) => {
       exclude: ['lucide-react'],
     },
     server: {
+      cors: {
+        origin: true,
+        credentials: true
+      },
       proxy: {
         // Proxy GitHub Models API to avoid CORS issues
         '/api/github-models': {
@@ -28,6 +32,24 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) => path.replace(/^\/api\/github-models/, ''),
           headers: {
             'Origin': 'https://models.github.ai'
+          }
+        },
+        // Proxy Bitbucket API to avoid CORS issues
+        '/api/bitbucket': {
+          target: 'https://api.bitbucket.org',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/bitbucket/, ''),
+          headers: {
+            'Origin': 'https://api.bitbucket.org'
+          }
+        },
+        // Proxy JIRA API to avoid CORS issues - fixed domain
+        '/api/jira': {
+          target: 'https://qc-hub.atlassian.net',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/jira/, ''),
+          headers: {
+            'Origin': 'https://qc-hub.atlassian.net'
           }
         }
       }
