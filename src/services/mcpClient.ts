@@ -3,6 +3,7 @@ import { ServiceFactory, ServiceCredentials } from './integrations';
 import { webSearchService } from './webSearch';
 import { aiSearchService } from './aiSearch';
 import { githubMCPService, GitHubCredentials, GitHubSearchResult } from './githubMCPService';
+import { customJiraMCPServer, JiraSearchResult } from './customJiraMCPServer';
 import { aiQueryProcessor, QueryIntent, MCPAction } from './aiQueryProcessor';
 
 export interface SearchResult {
@@ -199,11 +200,14 @@ class MCPClient extends EventEmitter {
 
   private async connectHttpServer(serverId: string, server: MCPServer): Promise<void> {
     try {
-      // For GitHub, use a different health check endpoint
+      // For different services, use appropriate health check endpoints
       let healthUrl: string;
       if (server.type === 'github') {
         // Use GitHub's user endpoint as health check
         healthUrl = `${server.config.serverUrl.replace(/\/$/, '')}/user`;
+      } else if (server.type === 'jira') {
+        // Use Jira's myself endpoint as health check
+        healthUrl = `${server.config.serverUrl.replace(/\/$/, '')}/rest/api/3/myself`;
       } else {
         // Use standard health endpoint for other services
         healthUrl = `${server.config.serverUrl.replace(/\/$/, '')}/health`;
@@ -211,9 +215,11 @@ class MCPClient extends EventEmitter {
 
       // Create timeout controller for better browser compatibility
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // Increased timeout for Jira
 
       try {
+        console.log(`🔍 Testing connection to ${server.type} at: ${healthUrl}`);
+        
         const response = await fetch(healthUrl, {
           method: 'GET',
           headers: {
@@ -232,11 +238,18 @@ class MCPClient extends EventEmitter {
           this.servers.set(serverId, server); // Ensure updated status is stored
           this.emit('serverStatusChanged', server);
           
-          // For GitHub, we don't need to sync like other MCP servers
-          if (server.type !== 'github') {
-            await this.syncHttpServer(serverId, server);
-          } else {
-            // For GitHub, just get a count of user repositories
+          // Get user info for verification
+          if (server.type === 'jira') {
+            try {
+              const userInfo = await response.json();
+              console.log(`✅ Jira connection successful. User: ${userInfo.displayName} (${userInfo.emailAddress})`);
+              server.itemCount = 0; // Will be updated when we do actual searches
+            } catch (error) {
+              console.warn('Failed to parse Jira user info:', error);
+              server.itemCount = 0;
+            }
+          } else if (server.type === 'github') {
+            // For GitHub, get repo count
             try {
               const repoResponse = await fetch(`${server.config.serverUrl}/user/repos?per_page=1`, {
                 headers: this.getHttpHeaders(server)
@@ -250,9 +263,23 @@ class MCPClient extends EventEmitter {
               console.warn('Failed to get GitHub repo count:', error);
               server.itemCount = 0;
             }
+          } else {
+            // For other services, try to sync
+            await this.syncHttpServer(serverId, server);
           }
         } else {
-          throw new Error(`HTTP connection failed: ${response.status} - ${response.statusText}`);
+          // Handle specific HTTP errors
+          let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+          
+          if (response.status === 401) {
+            errorMessage = 'Authentication failed. Please check your credentials.';
+          } else if (response.status === 403) {
+            errorMessage = 'Access denied. Check your permissions and API token.';
+          } else if (response.status === 404) {
+            errorMessage = 'Service not found. Check your server URL.';
+          }
+          
+          throw new Error(errorMessage);
         }
       } catch (error) {
         clearTimeout(timeoutId);
@@ -329,6 +356,13 @@ class MCPClient extends EventEmitter {
       case 'basic': {
         const basicAuth = btoa(`${credentials.username}:${credentials.password}`);
         headers['Authorization'] = `Basic ${basicAuth}`;
+        break;
+      }
+      case 'jira_basic': {
+        // Jira uses email:apiToken for basic auth
+        const basicAuth = btoa(`${credentials.email}:${credentials.apiToken}`);
+        headers['Authorization'] = `Basic ${basicAuth}`;
+        console.log(`🔐 Using Jira Basic Auth for: ${credentials.email}`);
         break;
       }
       case 'oauth': {
@@ -617,6 +651,8 @@ class MCPClient extends EventEmitter {
         return await this.executeGitHubAction(server, action, request);
       
       case 'jira':
+        return await this.executeJiraAction(server, action, request);
+      
       case 'confluence':
       case 'slack':
       case 'teams':
@@ -750,6 +786,211 @@ class MCPClient extends EventEmitter {
         ...result.metadata,
         mcpServer: server.id,
         searchType: 'ai-powered-mcp'
+      }
+    }));
+  }
+
+  /**
+   * Execute Jira-specific actions using our Custom Jira MCP Server
+   */
+  private async executeJiraAction(server: MCPServer, action: MCPAction, request: SearchRequest): Promise<SearchResult[]> {
+    try {
+      // Load Jira credentials from localStorage
+      let credentials;
+      const jiraConfigStr = localStorage.getItem('jira_config');
+      
+      if (jiraConfigStr) {
+        const jiraConfig = JSON.parse(jiraConfigStr);
+        credentials = {
+          email: jiraConfig.username || jiraConfig.email,
+          apiToken: jiraConfig.apiToken,
+          serverUrl: jiraConfig.serverUrl
+        };
+        console.log('✅ Loaded Jira credentials from localStorage');
+      } else {
+        // Fallback to server config
+        credentials = {
+          email: server.config.username || '',
+          apiToken: server.config.password || server.config.apiKey || server.config.token || '',
+          serverUrl: server.config.serverUrl || ''
+        };
+      }
+
+      if (!credentials.email || !credentials.apiToken || !credentials.serverUrl) {
+        throw new Error('Jira credentials not configured. Please set up Jira in the Integrations tab.');
+      }
+
+      // Connect to our custom Jira MCP server
+      const isConnected = await customJiraMCPServer.connect(credentials);
+      if (!isConnected) {
+        throw new Error('Failed to connect to Jira. Please check your credentials and server URL.');
+      }
+
+      console.log(`🔍 Executing Jira action: ${action.action} with parameters:`, action.parameters);
+
+      let jiraResults: JiraSearchResult[] = [];
+
+      switch (action.action) {
+        case 'search_issues': {
+          const searchOptions = {
+            maxResults: 20,
+            project: action.parameters.project as string,
+            assignee: action.parameters.assignee as string,
+            status: action.parameters.status as string,
+            issueType: action.parameters.issueType as string
+          };
+          // Use enhanced search method for better results
+          jiraResults = await customJiraMCPServer.searchContent(request.query, searchOptions);
+          break;
+        }
+
+        case 'get_user_issues': 
+        case 'get_my_issues': {
+          jiraResults = await customJiraMCPServer.getMyIssues({ maxResults: 20 });
+          break;
+        }
+
+        case 'get_recent_issues': {
+          const days = (action.parameters.days as number) || 7;
+          jiraResults = await customJiraMCPServer.getRecentIssues(days, { maxResults: 20 });
+          break;
+        }
+
+        case 'get_issue': {
+          const issueKey = action.parameters.key as string || action.parameters.issueKey as string;
+          if (issueKey) {
+            const issue = await customJiraMCPServer.getIssue(issueKey);
+            jiraResults = issue ? [issue] : [];
+          }
+          break;
+        }
+
+        case 'search_projects': {
+          // For project search, return recent issues as proxy
+          jiraResults = await customJiraMCPServer.getRecentIssues(30, { maxResults: 10 });
+          break;
+        }
+
+        default: {
+          console.warn(`Unknown Jira action: ${action.action}`);
+          // Fallback to general search
+          jiraResults = await customJiraMCPServer.searchIssues(request.query, { maxResults: 20 });
+        }
+      }
+
+      return this.convertJiraResults(jiraResults, server);
+    } catch (error) {
+      console.error(`Jira MCP action failed for ${server.name}:`, error);
+      
+      // Return helpful error information instead of throwing
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isCorsError = errorMessage.includes('CORS') || 
+                         errorMessage.includes('cross-origin') || 
+                         errorMessage.includes('Access-Control-Allow-Origin') ||
+                         errorMessage.includes('ERR_FAILED') ||
+                         errorMessage.includes('CORS_ERROR');
+
+      if (isCorsError) {
+        return [{
+          id: 'jira-cors-error',
+          title: '🌐 Jira CORS Error - Browser Security Restriction',
+          content: `❌ **Browser security is blocking direct access to Jira API**
+
+🔍 **What happened:**
+Your browser's CORS (Cross-Origin Resource Sharing) policy prevents web applications from making direct API calls to external domains like Jira.
+
+🔧 **Quick Fix - Install CORS Extension:**
+
+**For Chrome/Edge:**
+1. Go to Chrome Web Store
+2. Search for "CORS Unblock" 
+3. Install and enable it
+4. Reload this page and try again
+
+**For Firefox:**
+1. Go to Firefox Add-ons
+2. Search for "CORS Everywhere"
+3. Install and enable it
+4. Reload this page and try again
+
+⚠️ **Important:** Only use CORS extensions for development/testing
+
+🏢 **Production Solutions:**
+• Use desktop application (no browser restrictions)
+• Configure corporate proxy with CORS headers
+• Use hosted solution with backend proxy
+
+**Your Jira URL:** ${server.config?.serverUrl || 'Not configured'}
+
+**Next Steps:** Install a CORS browser extension temporarily to test the integration.`,
+          source: server.name,
+          sourceType: 'jira',
+          author: 'System',
+          date: new Date().toISOString(),
+          url: 'https://chrome.google.com/webstore/search/cors%20unblock',
+          relevanceScore: 0.9,
+          starred: false,
+          metadata: {
+            type: 'cors_error',
+            mcpServer: server.id,
+            errorType: 'browser_cors_restriction',
+            quickFix: 'Install CORS browser extension',
+            solutions: [
+              'Install CORS browser extension (dev only)',
+              'Use desktop application',
+              'Configure corporate proxy',
+              'Use hosted solution with backend'
+            ]
+          }
+        }];
+      }
+
+      return [{
+        id: 'jira-setup-error',
+        title: 'Jira Connection Error',
+        content: `Failed to connect to Jira: ${errorMessage}
+
+Please check:
+1. Your Jira server URL (e.g., https://company.atlassian.net)
+2. Your email address
+3. Your API token (generate from Atlassian Account Settings → Security → API tokens)
+
+Go to the Integrations tab to update your Jira configuration.`,
+        source: server.name,
+        sourceType: 'jira',
+        author: 'System',
+        date: new Date().toISOString(),
+        url: '#integrations',
+        relevanceScore: 0.9,
+        starred: false,
+        metadata: {
+          type: 'setup_guide',
+          mcpServer: server.id,
+          errorType: 'connection_failed'
+        }
+      }];
+    }
+  }
+
+  /**
+   * Convert Jira MCP results to SearchResult format
+   */
+  private convertJiraResults(jiraResults: JiraSearchResult[], server: MCPServer): SearchResult[] {
+    return jiraResults.map(result => ({
+      id: result.id,
+      title: result.title,
+      content: result.content,
+      source: server.name,
+      sourceType: 'jira' as const,
+      author: result.author,
+      date: result.date,
+      url: result.url,
+      relevanceScore: result.relevanceScore,
+      starred: false,
+      metadata: {
+        ...result.metadata,
+        mcpServer: server.id,
+        searchType: 'custom-jira-mcp'
       }
     }));
   }
@@ -1157,7 +1398,7 @@ class MCPClient extends EventEmitter {
     connection.send(JSON.stringify(syncMessage));
   }
 
-  private getServerCredentials(server: MCPServer): Record<string, any> {
+  private getServerCredentials(server: MCPServer): Record<string, string> {
     const { config } = server;
     
     switch (server.type) {
@@ -1165,34 +1406,51 @@ class MCPClient extends EventEmitter {
       case 'github':
         return {
           type: 'token',
-          token: config.token,
-          username: config.username
+          token: config.token || '',
+          username: config.username || ''
         };
       
-      case 'jira':
+      case 'jira': {
+        // For Jira, check localStorage first, then fallback to config
+        const jiraConfigStr = localStorage.getItem('jira_config');
+        if (jiraConfigStr) {
+          try {
+            const jiraConfig = JSON.parse(jiraConfigStr);
+            return {
+              type: 'jira_basic',
+              email: jiraConfig.username || jiraConfig.email || '',
+              apiToken: jiraConfig.apiToken || ''
+            };
+          } catch (error) {
+            console.warn('Failed to parse Jira config from localStorage:', error);
+          }
+        }
+        
+        // Fallback to server config
         return {
-          type: 'basic',
-          username: config.username,
-          password: config.password
+          type: 'jira_basic',
+          email: config.username || '',
+          apiToken: config.password || config.apiKey || config.token || ''
         };
+      }
       
       case 'teams':
         return {
           type: 'oauth',
-          token: config.token
+          token: config.token || ''
         };
       
       case 'confluence':
         return {
           type: 'api_key',
-          apiKey: config.apiKey,
-          username: config.username
+          apiKey: config.apiKey || '',
+          username: config.username || ''
         };
       
       case 'slack':
         return {
           type: 'bot_token',
-          token: config.token
+          token: config.token || ''
         };
       
       default:

@@ -25,7 +25,7 @@ export class AIQueryProcessor {
 
 Available MCP servers and their capabilities:
 - github: search_repositories, search_issues, search_code, search_commits, get_user_repos
-- jira: search_issues, search_projects, get_user_issues
+- jira: search_issues, get_my_issues, get_recent_issues, search_project, get_issue
 - confluence: search_pages, search_spaces
 - slack: search_messages, search_files, search_channels
 - teams: search_messages, search_files, search_meetings
@@ -66,7 +66,7 @@ Response: {
   "intent": "Get issues assigned to the current user", 
   "actions": [
     {"server": "github", "action": "search_issues", "parameters": {"assignee": "@me"}, "priority": 9},
-    {"server": "jira", "action": "get_user_issues", "parameters": {"assignee": "currentUser"}, "priority": 8}
+    {"server": "jira", "action": "get_my_issues", "parameters": {}, "priority": 8}
   ],
   "confidence": 0.9
 }

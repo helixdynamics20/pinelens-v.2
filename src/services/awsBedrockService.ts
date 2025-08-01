@@ -60,27 +60,43 @@ class AWSBedrockService {
    */
   async generateWithClaude(
     prompt: string,
-    config: Partial<BedrockModelConfig> = {}
+    config: Partial<BedrockModelConfig> = {},
+    queryType: 'analysis' | 'code' | 'general' | 'structured' = 'general'
   ): Promise<BedrockResponse> {
     const modelConfig: BedrockModelConfig = {
       modelId: 'anthropic.claude-3-haiku-20240307-v1:0', // Available in ap-south-1
-      temperature: 0.1,
+      temperature: queryType === 'code' ? 0.1 : 0.3,
       maxTokens: 4000,
       topP: 0.9,
       ...config
     };
+
+    // Construct messages with system guidance based on query type
+    const messages = [];
+    
+    // Add system-like guidance as the first user message for code requests
+    if (queryType === 'code') {
+      messages.push({
+        role: "user",
+        content: "You are an expert programmer. When asked for code, always provide complete, working code examples with explanations. Be helpful and provide practical implementations."
+      });
+      messages.push({
+        role: "assistant", 
+        content: "I understand. I'll provide complete, working code examples when requested. How can I help you with programming?"
+      });
+    }
+    
+    messages.push({
+      role: "user",
+      content: prompt
+    });
 
     const body = {
       anthropic_version: "bedrock-2023-05-31",
       max_tokens: modelConfig.maxTokens,
       temperature: modelConfig.temperature,
       top_p: modelConfig.topP,
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
+      messages
     };
 
     return this.invokeModel(modelConfig.modelId, body);
@@ -180,7 +196,7 @@ class AWSBedrockService {
       // Prioritize Claude 3 Haiku for structured/analysis tasks, Titan for general tasks
       if (queryType === 'structured' || queryType === 'analysis' || queryType === 'code') {
         try {
-          return await this.generateWithClaude(prompt, config);
+          return await this.generateWithClaude(prompt, config, queryType);
         } catch (claudeError) {
           console.warn('Claude model not available, trying Titan:', claudeError);
           return await this.generateWithTitan(prompt, config);
@@ -191,7 +207,7 @@ class AWSBedrockService {
           return await this.generateWithTitan(prompt, config);
         } catch (titanError) {
           console.warn('Titan model not available, trying Claude:', titanError);
-          return await this.generateWithClaude(prompt, config);
+          return await this.generateWithClaude(prompt, config, queryType);
         }
       }
     } catch (error) {
@@ -204,6 +220,10 @@ class AWSBedrockService {
    * Generic method to invoke any Bedrock model
    */
   private async invokeModel(modelId: string, body: Record<string, unknown>): Promise<BedrockResponse> {
+    if (!this.client) {
+      throw new Error('Bedrock client not initialized');
+    }
+
     try {
       const input: InvokeModelCommandInput = {
         modelId,

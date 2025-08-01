@@ -6,6 +6,7 @@
 import { realAPIService } from './realAPIService';
 import { searchProcessor } from './searchProcessor';
 import { githubCopilotService } from './githubCopilotService';
+import { enhancedInHouseMCPService } from './enhancedInHouseMCPService';
 
 export type SearchMode = 'unified' | 'apps' | 'web' | 'ai';
 
@@ -190,31 +191,275 @@ class UnifiedSearchService {
     try {
       console.log('🔍 Starting app search with query:', query);
       
-      // Auto-configure services if tokens exist
-      this.autoConfigureServicesFromTokens();
+      const allResults: UnifiedSearchResult[] = [];
       
-      // Check if any services are configured
-      const enabledServices = realAPIService.getEnabledServices();
-      console.log('📱 Enabled services:', enabledServices.map(s => `${s.name} (${s.type})`));
+      // PRIORITY 1: Search In-House MCP services FIRST (Jira, Bitbucket)
+      console.log('🏢 Checking In-House MCP services...');
+      const hasJira = enhancedInHouseMCPService.isJiraConfigured();
+      const hasBitbucket = enhancedInHouseMCPService.isBitbucketConfigured();
+      console.log('🔧 In-House services status:', { hasJira, hasBitbucket });
       
-      if (enabledServices.length === 0) {
-        throw new Error('No services configured. Please configure your GitHub token or other API credentials in the Integrations section.');
-      }
-
-      const appResults = await realAPIService.searchAllServices(query);
-      console.log(`📊 Found ${appResults.length} app results`);
-      
-      return appResults.map(result => ({
-        ...result,
-        searchMode: 'apps' as SearchMode,
-        metadata: {
-          type: result.metadata?.type || 'unknown',
-          ...result.metadata
+      if (hasJira || hasBitbucket) {
+        try {
+          const inHouseResults = await this.searchInHouseServices(query);
+          console.log(`🏢 Found ${inHouseResults.length} in-house MCP results`);
+          allResults.push(...inHouseResults);
+        } catch (error) {
+          console.warn('⚠️ In-house MCP search failed:', error);
         }
-      }));
+      }
+      
+      // PRIORITY 2: Search traditional services (GitHub, etc.) as secondary
+      this.autoConfigureServicesFromTokens();
+      const enabledServices = realAPIService.getEnabledServices();
+      console.log('📱 Traditional services:', enabledServices.map(s => `${s.name} (${s.type})`));
+      
+      if (enabledServices.length > 0) {
+        try {
+          const appResults = await realAPIService.searchAllServices(query);
+          console.log(`📊 Found ${appResults.length} traditional app results`);
+          
+          allResults.push(...appResults.map(result => ({
+            ...result,
+            searchMode: 'apps' as SearchMode,
+            metadata: {
+              type: result.metadata?.type || 'unknown',
+              ...result.metadata
+            }
+          })));
+        } catch (error) {
+          console.warn('⚠️ Traditional services search failed:', error);
+        }
+      }
+      
+      // If no results from any service, provide helpful guidance
+      if (allResults.length === 0) {
+        const serviceStatus = {
+          jira: hasJira,
+          bitbucket: hasBitbucket,
+          github: enabledServices.some(s => s.type === 'github'),
+          traditionalServices: enabledServices.length > 0
+        };
+        
+        console.log('❌ No results found. Service status:', serviceStatus);
+        
+        let errorMessage = 'No services configured or no results found. ';
+        if (!hasJira && !hasBitbucket && enabledServices.length === 0) {
+          errorMessage += 'Please configure your In-House services (Jira/Bitbucket) in the In-House tab, or set up GitHub/other services in the Integrations section.';
+        } else if (hasJira || hasBitbucket) {
+          errorMessage += 'Your In-House MCP services are configured but returned no results for this query. Try a different search term.';
+        } else {
+          errorMessage += 'Please configure additional services in the Integrations section.';
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      console.log(`✅ Total app search results: ${allResults.length}`);
+      return allResults.sort((a, b) => b.relevanceScore - a.relevanceScore);
+      
     } catch (error) {
       console.error('❌ Apps search failed:', error);
       throw error; // Re-throw to show user-friendly error message
+    }
+  }
+
+  private async searchInHouseServices(query: string): Promise<UnifiedSearchResult[]> {
+    const results: UnifiedSearchResult[] = [];
+    
+    // Enhanced intelligent routing to correct MCP servers
+    try {
+      console.log('🧠 Starting intelligent MCP server routing for query:', query);
+      
+      // Step 1: Analyze query to determine which MCP servers to target
+      const mcpTargets = this.analyzeMCPTargets(query);
+      console.log('🎯 MCP targets determined:', mcpTargets);
+      
+      // Step 2: Route to appropriate MCP servers based on analysis
+      for (const target of mcpTargets) {
+        try {
+          switch (target.server) {
+            case 'jira': {
+              const jiraResults = await this.searchJiraMCP(query, target.intent);
+              results.push(...jiraResults);
+              break;
+            }
+              
+            case 'bitbucket': {
+              const bitbucketResults = await this.searchBitbucketMCP(query, target.intent);
+              results.push(...bitbucketResults);
+              break;
+            }
+              
+            case 'unified': {
+              // Fallback to unified search when intent is unclear
+              const unifiedResults = await enhancedInHouseMCPService.unifiedSearch(query);
+              results.push(...unifiedResults.map(result => ({
+                id: result.id,
+                title: result.title,
+                content: result.description,
+                source: `${result.source} (Smart Search)`,
+                sourceType: result.type as 'jira' | 'bitbucket' | 'github' | 'web' | 'ai',
+                author: result.metadata?.assignee || 'Unknown',
+                date: result.metadata?.updated || result.metadata?.updatedOn || new Date().toISOString(),
+                url: result.url,
+                relevanceScore: 0.7,
+                searchMode: 'apps' as SearchMode,
+                metadata: {
+                  type: result.type,
+                  searchType: 'unified',
+                  ...result.metadata
+                },
+                accessLevel: 'private' as const
+              })));
+              break;
+            }
+          }
+        } catch (serverError) {
+          console.warn(`⚠️ ${target.server} MCP server search failed:`, serverError);
+        }
+      }
+      
+      console.log(`🏢 Total in-house MCP results: ${results.length}`);
+      
+    } catch (error) {
+      console.warn('⚠️ In-house MCP search failed (this is normal if not configured):', error);
+    }
+    
+    return results;
+  }
+
+  // Analyze user query to determine which MCP servers should handle it
+  private analyzeMCPTargets(query: string): Array<{server: 'jira' | 'bitbucket' | 'unified', intent: string}> {
+    const lowerQuery = query.toLowerCase();
+    const targets: Array<{server: 'jira' | 'bitbucket' | 'unified', intent: string}> = [];
+    
+    // Jira-specific keywords and patterns
+    const jiraKeywords = [
+      'ticket', 'issue', 'bug', 'task', 'story', 'epic', 'jira',
+      'project', 'sprint', 'backlog', 'assignee', 'status',
+      'priority', 'nsvp', 'island', 'open', 'closed', 'in progress'
+    ];
+    
+    // Bitbucket-specific keywords  
+    const bitbucketKeywords = [
+      'repository', 'repo', 'code', 'commit', 'branch', 'pull request',
+      'pr', 'bitbucket', 'git', 'pipeline', 'deployment'
+    ];
+    
+    // Check for specific ticket patterns (NSVP-123, PROJ-456, etc.)
+    const ticketPattern = /[A-Z]{2,}-\d+/;
+    if (ticketPattern.test(query)) {
+      targets.push({ server: 'jira', intent: 'specific_ticket' });
+      return targets; // Ticket patterns are highly specific to Jira
+    }
+    
+    // Check Jira keywords
+    const jiraMatches = jiraKeywords.filter(keyword => lowerQuery.includes(keyword));
+    if (jiraMatches.length > 0) {
+      targets.push({ server: 'jira', intent: jiraMatches.join(', ') });
+    }
+    
+    // Check Bitbucket keywords
+    const bitbucketMatches = bitbucketKeywords.filter(keyword => lowerQuery.includes(keyword));
+    if (bitbucketMatches.length > 0) {
+      targets.push({ server: 'bitbucket', intent: bitbucketMatches.join(', ') });
+    }
+    
+    // If no specific matches, search both or use unified approach
+    if (targets.length === 0) {
+      targets.push({ server: 'unified', intent: 'general_search' });
+    }
+    
+    return targets;
+  }
+
+  // Search Jira MCP with specific intent
+  private async searchJiraMCP(query: string, intent: string): Promise<UnifiedSearchResult[]> {
+    console.log('🎫 Searching Jira MCP with intent:', intent);
+    
+    if (!enhancedInHouseMCPService.isJiraConfigured()) {
+      console.log('⚠️ Jira not configured, skipping Jira MCP search');
+      return [];
+    }
+    
+    try {
+      // Use intelligent search for better results
+      const intelligentResults = await enhancedInHouseMCPService.intelligentSearch(query);
+      
+      return intelligentResults.searchResults
+        .filter(result => result.source === 'JIRA') // Only Jira results
+        .map(result => ({
+          id: result.id,
+          title: result.title,
+          content: result.description,
+          source: 'Jira MCP',
+          sourceType: 'jira' as const,
+          author: result.metadata?.assignee || 'Jira',
+          date: result.metadata?.updated || new Date().toISOString(),
+          url: result.url,
+          relevanceScore: 0.9,
+          searchMode: 'apps' as SearchMode,
+          metadata: {
+            type: 'jira_issue',
+            intent,
+            intelligentIntent: intelligentResults.intent,
+            suggestions: intelligentResults.suggestions,
+            ...result.metadata
+          },
+          accessLevel: 'private' as const
+        }));
+    } catch (error) {
+      console.error('❌ Jira MCP search failed:', error);
+      return [];
+    }
+  }
+
+  // Search Bitbucket MCP with specific intent  
+  private async searchBitbucketMCP(query: string, intent: string): Promise<UnifiedSearchResult[]> {
+    console.log('🗂️ Searching Bitbucket MCP with intent:', intent);
+    
+    if (!enhancedInHouseMCPService.isBitbucketConfigured()) {
+      console.log('⚠️ Bitbucket not configured, skipping Bitbucket MCP search');
+      return [];
+    }
+    
+    try {
+      // Search Bitbucket repositories
+      const repoResults = await enhancedInHouseMCPService.searchBitbucketRepositories(query, 10);
+      
+      return (repoResults.values || []).map((repo: {
+        uuid?: string;
+        name: string;
+        description?: string;
+        language?: string;
+        is_private?: boolean;
+        size?: number;
+        updated_on?: string;
+        links?: { html?: { href?: string } };
+      }) => ({
+        id: repo.uuid || repo.name,
+        title: `Repository: ${repo.name}`,
+        content: repo.description || 'No description available',
+        source: 'Bitbucket MCP',
+        sourceType: 'bitbucket' as const,
+        author: 'Bitbucket',
+        date: repo.updated_on || new Date().toISOString(),
+        url: repo.links?.html?.href || '#',
+        relevanceScore: 0.8,
+        searchMode: 'apps' as SearchMode,
+        metadata: {
+          type: 'bitbucket_repo',
+          intent,
+          language: repo.language,
+          isPrivate: repo.is_private,
+          size: repo.size
+        },
+        accessLevel: repo.is_private ? 'private' as const : 'public' as const
+      }));
+    } catch (error) {
+      console.error('❌ Bitbucket MCP search failed:', error);
+      return [];
     }
   }
 
@@ -256,6 +501,38 @@ class UnifiedSearchService {
         });
       }
     });
+  }
+
+  /**
+   * Extract description from JIRA ADF (Atlassian Document Format) content
+   */
+  private extractJiraDescription(description: any): string {
+    if (!description) return 'No description available';
+    
+    if (typeof description === 'string') {
+      return description;
+    }
+    
+    // Handle ADF format
+    if (description.type === 'doc' && description.content) {
+      const extractText = (content: any[]): string => {
+        return content.map(node => {
+          if (node.type === 'paragraph' && node.content) {
+            return node.content.map((textNode: any) => textNode.text || '').join('');
+          } else if (node.type === 'text') {
+            return node.text || '';
+          } else if (node.content) {
+            return extractText(node.content);
+          }
+          return '';
+        }).join(' ').trim();
+      };
+      
+      const text = extractText(description.content);
+      return text || 'No description available';
+    }
+    
+    return 'No description available';
   }
 
   /**

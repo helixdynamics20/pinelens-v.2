@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, User, Zap, BarChart3, Grid3X3 } from 'lucide-react';
+import { Search, User, Zap, BarChart3, Grid3X3, Server } from 'lucide-react';
 import { NotificationDropdown } from './NotificationDropdown';
 
 interface HeaderProps {
@@ -69,6 +69,17 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Grid3X3 className="w-4 h-4" />
               <span>Integrations</span>
+            </button>
+            <button 
+              onClick={() => onViewChange('inhouse-integrations')}
+              className={`flex items-center space-x-2 transition-colors ${
+                currentView === 'inhouse-integrations' 
+                  ? 'text-blue-600 font-medium' 
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              <Server className="w-4 h-4" />
+              <span>In-House</span>
             </button>
           </nav>
 
